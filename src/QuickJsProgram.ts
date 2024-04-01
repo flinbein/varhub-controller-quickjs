@@ -9,13 +9,10 @@ import {
 
 export interface QuickJsProgramSourceConfig {
 	sources: {
-		[moduleName: string]: JsSourceModule | JsonSourceModule;
+		[moduleName: string]: string;
 	}
 	main: string,
 }
-
-interface JsSourceModule { type: "js"; source: string }
-interface JsonSourceModule { type: "json"; source: string }
 
 export class QuickJsProgram extends UsingDisposable {
 	readonly #sourceConfig: QuickJsProgramSourceConfig
@@ -25,11 +22,13 @@ export class QuickJsProgram extends UsingDisposable {
 	readonly #context: QuickJSContext
 	readonly #intervalManager = new QuickJSIntervalManager(5000);
 	readonly #timeoutManager = new QuickJSTimeoutManager(5000);
+	readonly #maxInterrupts = 1000;
 	
 	constructor(quickJS: QuickJSWASMModule, sourceConfig: QuickJsProgramSourceConfig) {
 		super();
 		// todo: ADD INTERRUPT-HANDLER
 		const runtime = this.#runtime = quickJS.newRuntime();
+		runtime.setInterruptHandler(this.#interruptHandler.bind(this));
 		this.#sourceConfig = sourceConfig;
 		const context = this.#context = this.#runtime.newContext();
 		this.#settleGlobal(context);
@@ -68,9 +67,10 @@ export class QuickJsProgram extends UsingDisposable {
 
 			const intervalManager = this.#intervalManager;
 			const timeoutManager = this.#timeoutManager;
+			const clearInterrupts = () => this.#clearInterruptsCounter();
 			const setIntervalHandle = context.newFunction("setInterval", function(callbackArg, delayArg, ...args) {
 				const delayMs = context.getNumber(delayArg);
-				const intervalId = intervalManager.setInterval(context, callbackArg, this, delayMs, ...args);
+				const intervalId = intervalManager.setInterval(context, clearInterrupts, callbackArg, this, delayMs, ...args);
 				return context.newNumber(intervalId);
 			})
 			
@@ -81,7 +81,7 @@ export class QuickJsProgram extends UsingDisposable {
 			
 			const setTimeoutHandle = context.newFunction("setTimeout", function(callbackArg, delayArg, ...args) {
 				const delayMs = context.getNumber(delayArg);
-				const timeoutId = timeoutManager.setTimeout(context, callbackArg, this, delayMs, ...args);
+				const timeoutId = timeoutManager.setTimeout(context, clearInterrupts, callbackArg, this, delayMs, ...args);
 				return context.newNumber(timeoutId);
 			})
 			
@@ -99,11 +99,22 @@ export class QuickJsProgram extends UsingDisposable {
 	}
 	
 	#moduleLoader(moduleName: string, context: QuickJSContext): string {
-		const moduleData = this.#sourceConfig.sources[moduleName];
-		if (!moduleData) throw new Error("module not found: "+moduleName);
-		if (moduleData.type === "js") return moduleData.source;
-		if (moduleData.type === "json") return `export default ${JSON.stringify(JSON.parse(moduleData.source))}`;
-		throw new Error(`unknown module type`);
+		const src = this.#sourceConfig.sources[moduleName];
+		if (src == null) throw new Error("module not found: "+moduleName);
+		if (moduleName.endsWith(".js") || moduleName.endsWith(".cjs") || moduleName.endsWith(".mjs")) return src;
+		if (moduleName.endsWith(".json")) return `export default ${src}`;
+		throw new Error(`unknown module type: ${moduleName}`);
+	}
+	
+	#interruptsCount = 0;
+	#interruptHandler(runtime: QuickJSRuntime): boolean {
+		if (this.#interruptsCount > this.#maxInterrupts) return true;
+		this.#interruptsCount++;
+		return false;
+	}
+	
+	#clearInterruptsCounter(){
+		this.#interruptsCount = 0;
 	}
 
 	#wrap(scope: Scope, context: QuickJSContext, data: unknown): QuickJSHandle{
@@ -131,9 +142,9 @@ export class QuickJsProgram extends UsingDisposable {
 		throw new Error(`unwrappable type: ${typeof data}`);
 	}
 
-	call(methodName: string, thisArg: unknown, ...args: unknown[]): unknown{
+	call(methodName: string, thisArg: unknown = undefined, ...args: unknown[]): unknown {
 		const context = this.#context;
-		return Scope.withScope((scope) => {
+		const callResult = Scope.withScope((scope) => {
 			const wrapArg = this.#wrap.bind(this, scope, context);
 			const methodHandle = scope.manage(context.getProp(this.#exports, methodName));
 			const typeOfMethod = context.typeof(methodHandle);
@@ -142,32 +153,45 @@ export class QuickJsProgram extends UsingDisposable {
 			}
 			const thisArgHandle = wrapArg(thisArg);
 			const argsHandle = args.map(wrapArg);
-			const callResult = context.callFunction(methodHandle, thisArgHandle, ...argsHandle);
-			if (!("value" in callResult)) {
-				const dump = context.dump(callResult.error);
-				callResult.error.dispose();
-				// todo check if promise
+			this.#clearInterruptsCounter();
+			return context.callFunction(methodHandle, thisArgHandle, ...argsHandle);
+		})
+		if (!("value" in callResult)) {
+			throw this.#dumpPromisify(context, callResult.error);
+		}
+		return this.#dumpPromisify(context, callResult.value);
+	}
+	
+	#dumpPromisify(context: QuickJSContext, valueUnscoped: QuickJSHandle): unknown{
+		const promiseState = context.getPromiseState(valueUnscoped);
+		if (promiseState.type === "fulfilled" && promiseState.notAPromise) {
+			const dump = context.dump(valueUnscoped);
+			promiseState.value.dispose();
+			return dump;
+		}
+		if (promiseState.type === "fulfilled") {
+			const promise = Promise.resolve(context.dump(promiseState.value));
+			promiseState.value.dispose();
+			return promise;
+		}
+		if (promiseState.type === "rejected") {
+			const error = this.#dumpPromisify(context, promiseState.error);
+			return Promise.reject(error);
+		}
+		return context.resolvePromise(valueUnscoped).then(resolvedResult => {
+			if (!("value" in resolvedResult)) {
+				const innerPromiseState = context.getPromiseState(resolvedResult.error);
+				if (innerPromiseState.type !== "fulfilled" || !innerPromiseState.notAPromise) {
+					throw this.#dumpPromisify(context, resolvedResult.error);
+				}
+				const dump = context.dump(resolvedResult.error);
+				resolvedResult.error.dispose();
 				throw dump;
 			}
-			const resultHandleUnscoped = context.unwrapResult(callResult);
-			const promiseState = context.getPromiseState(resultHandleUnscoped);
-			if (promiseState.type === "fulfilled" && promiseState.notAPromise) {
-				const resolvedValue = scope.manage(promiseState.value);
-				const dump = context.dump(resolvedValue);
-				resultHandleUnscoped.dispose();
-				return dump;
-			}
-			return context.resolvePromise(resultHandleUnscoped).then(resolvedResult => {
-				if (!("value" in resolvedResult)) {
-					const dump = context.dump(resolvedResult.error);
-					resolvedResult.error.dispose();
-					throw dump;
-				}
-				// do not use scope here
-				const dump = context.dump(resolvedResult.value);
-				resolvedResult.value.dispose();
-				return dump;
-			});
+			const dump = context.dump(resolvedResult.value);
+			resolvedResult.value.dispose();
+			valueUnscoped.dispose();
+			return dump;
 		});
 	}
 	
@@ -202,7 +226,7 @@ class QuickJSIntervalManager extends UsingDisposable {
 		this.#maxIntervals = maxIntervals;
 	}
 	
-	setInterval(context: QuickJSContext, callbackVal: QuickJSHandle, thisVal: QuickJSHandle, timer: number, ...args: QuickJSHandle[]): number {
+	setInterval(context: QuickJSContext, callback: null | (() => void), callbackVal: QuickJSHandle, thisVal: QuickJSHandle, timer: number, ...args: QuickJSHandle[]): number {
 		if (!this.#intervalMap) throw new Error("intervals disposed");
 		if (this.#intervalMap.size >= this.#maxIntervals) throw new Error("too many intervals");
 		
@@ -213,6 +237,7 @@ class QuickJSIntervalManager extends UsingDisposable {
 		if (this.intervalId >= Number.MAX_SAFE_INTEGER) this.intervalId = 0;
 
 		const intervalValue = setInterval(() => {
+			callback?.()
 			const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
 			context.unwrapResult(callResult).dispose();
 			context.runtime.executePendingJobs();
@@ -262,7 +287,7 @@ class QuickJSTimeoutManager extends UsingDisposable {
 		this.#maxTimeouts = maxTimeouts;
 	}
 	
-	setTimeout(context: QuickJSContext, callbackVal: QuickJSHandle, thisVal: QuickJSHandle, timer: number, ...args: QuickJSHandle[]): number {
+	setTimeout(context: QuickJSContext, callback: null | (() => void), callbackVal: QuickJSHandle, thisVal: QuickJSHandle, timer: number, ...args: QuickJSHandle[]): number {
 		if (!this.#timeoutMap) throw new Error("timeouts disposed");
 		if (this.#timeoutMap.size >= this.#maxTimeouts) throw new Error("too many timeouts");
 		
@@ -273,6 +298,7 @@ class QuickJSTimeoutManager extends UsingDisposable {
 		if (this.timeoutId >= Number.MAX_SAFE_INTEGER) this.timeoutId = 0;
 		
 		const timeoutValue = setTimeout(() => {
+			callback?.()
 			const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
 			this.#timeoutMap?.delete(timeoutId);
 			for (let disposable of [thisHandle, callbackHandle, ...argHandles]) {
