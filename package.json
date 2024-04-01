@@ -1,0 +1,21 @@
+{
+  "name": "varhub-controller-quickjs",
+  "version": "1.0.0",
+  "node": ">=20.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import=./test/register.js --test **/*.test.*",
+    "prepare": "husky install"
+  },
+  "dependencies": {
+    "quickjs-emscripten": "^0.29.1"
+  },
+  "devDependencies": {
+    "@flinbein/varhub": "git+https://github.com/flinbein/varhub#1.2.2",
+    "typescript": "^5.4.3",
+    "ts-jest": "^29.1.2",
+    "ts-node": "^10.9.2",
+    "husky": "^9.0.11"
+  }
+}
