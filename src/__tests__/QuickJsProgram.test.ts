@@ -8,9 +8,8 @@ const quickJS = await getQuickJS();
 describe("test program",() => {
 	it("simple methods", async () => {
 		const sourceConfig: QuickJsProgramSourceConfig = {
-			main: "index.js",
 			sources: {
-				["index.js"]: `
+				"index.js": `
 					export function increment(x){
 						return x+1;
 					}
@@ -70,9 +69,8 @@ describe("test program",() => {
 	
 	it("simple getters", () => {
 		const sourceConfig: QuickJsProgramSourceConfig = {
-			main: "index.js",
 			sources: {
-				["index.js"]: `
+				"index.js": `
 					export let value = 1;
 					export function setValue(x){
 						value = x;
@@ -91,19 +89,18 @@ describe("test program",() => {
 	
 	it("simple modules", () => {
 		const sourceConfig: QuickJsProgramSourceConfig = {
-			main: "index.js",
 			sources: {
-				["index.js"]: `
+				"index.js": `
 					export * from "inner/methods.js";
 				`,
-				["inner/methods.js"]: `
+				"inner/methods.js": `
 					import {secret} from "../secret.js";
 					export function add(a, b){
 						return a+b;
 					}
 					export {secret};
 				`,
-				["secret.js"]: `
+				"secret.js": `
 					export const secret = 100;
 				`
 			}
@@ -118,13 +115,12 @@ describe("test program",() => {
 	
 	it("simple json", () => {
 		const sourceConfig: QuickJsProgramSourceConfig = {
-			main: "index.js",
 			sources: {
-				["index.js"]: `
+				"index.js": `
 					import data from "inner/data.json";
 					export const foo = data.foo;
 				`,
-				["inner/data.json"]: `{"foo": "bar"}`
+				"inner/data.json": `{"foo": "bar"}`
 			}
 		}
 		
@@ -132,11 +128,45 @@ describe("test program",() => {
 		assert.equal(program.getProp("foo"), "bar", "json imported");
 	})
 	
+	it("simple text", () => {
+		const sourceConfig: QuickJsProgramSourceConfig = {
+			sources: {
+				"index.js": `
+					import data from "inner/data.txt";
+					export {data as text}
+				`,
+				"inner/data.txt": "Hello world"
+			}
+		}
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		assert.equal(program.getProp("text"), "Hello world", "txt imported");
+	});
+	
+	it("immediate", async () => {
+		const sourceConfig: QuickJsProgramSourceConfig = {
+			sources: {
+				"index.js": `
+					export function test() {
+						return new Promise(r => {
+							let x = 0;
+							setImmediate(() => r(x));
+							x++;
+						});
+					}
+				`
+			}
+		}
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const result = await program.call("test")
+		assert.equal(result, 1, "txt imported");
+	})
+	
 	it("deadlocks", async () => {
 		const sourceConfig: QuickJsProgramSourceConfig = {
-			main: "index.js",
 			sources: {
-				["index.js"]: `
+				"index.js": `
 					export function cycle(x){
 						let c = 0;
 						for (let i=0; i<x; i++);
@@ -172,9 +202,8 @@ describe("test program",() => {
 	
 	it("deadlocks in timeout", async () => {
 		const sourceConfig: QuickJsProgramSourceConfig = {
-			main: "index.js",
 			sources: {
-				["index.js"]: `
+				"index.js": `
 					export async function asyncCycle(){
 						await new Promise(r => setTimeout(r, 1));
 						while (true);
