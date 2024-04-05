@@ -1,9 +1,13 @@
-import { getQuickJS } from "quickjs-emscripten"
 import { default as assert } from "node:assert";
 import { describe, it } from "node:test";
-import {QuickJsProgram, QuickJsProgramSourceConfig} from "../QuickJsProgram.js"
+import { QuickJsProgram, QuickJsProgramOptions, QuickJsProgramSourceConfig } from "../QuickJsProgram.js"
 
-const quickJS = await getQuickJS();
+import { newQuickJSWASMModuleFromVariant } from "quickjs-emscripten-core"
+import releaseVariant from "@jitl/quickjs-ng-wasmfile-release-sync"
+const quickJS = await newQuickJSWASMModuleFromVariant(releaseVariant as any);
+
+// import { getQuickJS } from "quickjs-emscripten"
+//const quickJS = await getQuickJS();
 
 describe("test program",() => {
 	it("simple methods", async () => {
@@ -67,7 +71,7 @@ describe("test program",() => {
 		}
 	});
 	
-	it("simple getters", () => {
+	it("simple getProp", () => {
 		const sourceConfig: QuickJsProgramSourceConfig = {
 			sources: {
 				"index.js": `
@@ -167,36 +171,27 @@ describe("test program",() => {
 		const sourceConfig: QuickJsProgramSourceConfig = {
 			sources: {
 				"index.js": `
-					export function cycle(x){
-						let c = 0;
-						for (let i=0; i<x; i++);
-						return c;
-					}
-					
-					export async function asyncCycle(x){
-						let c = 0;
-						for (let i=0; i<x; i++);
-						return c;
-					}
+					export function cycle(x){while (x --> 0);}
+					export async function asyncCycle(x){while (x --> 0);}
 				`,
 			}
 		}
 		
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		program.call("cycle", null, 1);
-		program.call("cycle", null, 100);
-		program.call("cycle", null, 100000);
+		program.call("cycle", null, 1, "no deadlock in 1");
+		program.call("cycle", null, 100, "no deadlock in 100");
+		program.call("cycle", null, 100000, "no deadlock in 100000");
 		assert.throws(() => {
 			program.call("cycle", null, Infinity);
 		}, (error: any) => error.message === 'interrupted', "should interrupt");
-		program.call("cycle", null, 10);
 		
-		await program.call("asyncCycle", null, 1);
-		await program.call("asyncCycle", null, 100);
-		await program.call("asyncCycle", null, 100000);
+		await program.call("asyncCycle", null, 1, "no async deadlock in 1");
+		await program.call("asyncCycle", null, 100, "no async deadlock in 100");
+		await program.call("asyncCycle", null, 100000, "no async deadlock in 10000");
 		await assert.rejects(async () => {
 			await program.call("asyncCycle", null, Infinity);
 		}, (error: any) => error.message === 'interrupted', "should interrupt async");
+		
 		await program.call("asyncCycle", null, 10);
 	});
 	
@@ -212,11 +207,56 @@ describe("test program",() => {
 				`,
 			}
 		}
-
+		
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		await assert.rejects(async () => {
 			await program.call("asyncCycle", undefined);
 		}, (error: any) => error.message === 'interrupted', "should reject deadlock");
 		
+	})
+	
+	it("simple api", async () => {
+		
+		const apiMap = {} as any;
+		const options: QuickJsProgramOptions = {
+			getApi: (name: string) => apiMap[name] = (...args: any[]) => [name, ...args],
+			hasApi: (name: string) => name in apiMap
+		}
+		const sourceConfig: QuickJsProgramSourceConfig = {
+			sources: {
+				"index.js": `
+					import api from "@varhub/api/testApi"
+					export const test = () => api(1,2,3);
+				`,
+			}
+		}
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig, options);
+		assert.deepEqual(program.call("test"), ["testApi", 1, 2, 3]);
+	});
+	
+	it("async api", async () => {
+		
+		const apiMap = {} as any;
+		const options: QuickJsProgramOptions = {
+			getApi: (name: string) => apiMap[name] = (...args: any[]) => [name, ...args],
+			hasApi: (name: string) => name in apiMap
+		}
+		const sourceConfig: QuickJsProgramSourceConfig = {
+			sources: {
+				"index.js": `
+					import api from "@varhub/api/asyncApi"
+					export async function test() => {
+						await new Promise(r => setTimeout(r, 1));
+						return api(1,2,3);
+					}
+				`,
+			}
+		}
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig, options);
+		const result = program.call("test");
+		assert.ok(result instanceof Promise, "result is promise");
+		assert.deepEqual(await result, ["asyncApi", 1, 2, 3]);
 	})
 })

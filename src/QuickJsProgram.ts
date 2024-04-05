@@ -8,6 +8,9 @@ import {
 } from "quickjs-emscripten"
 import { Lifetime } from "quickjs-emscripten-core";
 import url from 'node:url';
+import {QuickJSTimeoutManager, QuickJSImmediateManager, QuickJSIntervalManager} from "./scope/TimeManagers.js"
+import { ConsoleManager } from "./scope/ConsoleManager.js";
+import {hrtime} from "node:process";
 
 export interface QuickJsProgramSourceConfig {
 	sources: {
@@ -15,99 +18,67 @@ export interface QuickJsProgramSourceConfig {
 	}
 	main?: string,
 }
+export interface QuickJsProgramOptions {
+	getApi?: (name: string) => (...args: any) => any;
+	hasApi?: (name: string) => boolean;
+}
 
 export class QuickJsProgram extends UsingDisposable {
 	readonly #sourceConfig: QuickJsProgramSourceConfig
 	
-	readonly #runtime: QuickJSRuntime
+	readonly #options: QuickJsProgramOptions
 	readonly #exports: QuickJSHandle
 	readonly #context: QuickJSContext
 	readonly #intervalManager = new QuickJSIntervalManager(5000);
 	readonly #timeoutManager = new QuickJSTimeoutManager(5000);
 	readonly #immediateManager = new QuickJSImmediateManager(5000);
-	readonly #maxInterrupts = 1000;
+	readonly #consoleManager = new ConsoleManager("QuickJS:");
+	// readonly #maxInterrupts = 10000;
+	readonly #maxInterruptTimeNs = 100000000n; // nanoseconds
+	readonly #ownedDisposableItems = new Set<UsingDisposable>([
+		this.#consoleManager,
+		this.#timeoutManager,
+		this.#intervalManager,
+		this.#immediateManager,
+	]);
 	
-	constructor(quickJS: QuickJSWASMModule, sourceConfig: QuickJsProgramSourceConfig) {
+	constructor(quickJS: QuickJSWASMModule, sourceConfig: QuickJsProgramSourceConfig, options: QuickJsProgramOptions = {}) {
 		super();
-		const runtime = this.#runtime = quickJS.newRuntime();
+		this.#sourceConfig = sourceConfig;
+		this.#options = options;
+		const context = this.#context = quickJS.newContext();
+		context.runtime.setMemoryLimit(10000000);
+		
+		this.#intervalManager.settleContext(context);
+		this.#timeoutManager.settleContext(context);
+		this.#immediateManager.settleContext(context);
+		this.#consoleManager.settleContext(context);
+		
+		this.#ownedDisposableItems.add(context);
+		
+		
+		const runtime = context.runtime;
 		runtime.setInterruptHandler(this.#interruptHandler.bind(this));
 		runtime.setModuleLoader(this.#moduleLoader.bind(this), this.#moduleNormalizer.bind(this));
-		this.#sourceConfig = sourceConfig;
-		const context = this.#context = this.#runtime.newContext();
+		
 
-		this.#settleGlobal(context);
 		const mainModuleName = this.#sourceConfig.main ?? "index.js";
 		
 		const source = this.#moduleLoader(mainModuleName, context);
 		const moduleResult = context.evalCode(source, mainModuleName, { type: "module", strict: true, strip: true });
-		this.#exports = context.unwrapResult(moduleResult);
-	}
-	
-	#settleGlobal(context: QuickJSContext) {
-		Scope.withScope((scope) => {
-			
-			// todo: remove console
-			const consoleHandle = scope.manage(context.newObject())
-			const consoleMethodNames = ["log", "error", "warn", "info", "debug"] as const satisfies (keyof typeof console)[];
-			for (let consoleMethodName of consoleMethodNames) {
-				const methodHandle = scope.manage(context.newFunction(consoleMethodName, (...args: QuickJSHandle[]) => {
-					const nativeArgs = args.map(context.dump);
-					console[consoleMethodName]("QuickJS:", ...nativeArgs);
-				}));
-				context.setProp(consoleHandle, consoleMethodName, methodHandle)
-			}
-			context.setProp(context.global, "console", consoleHandle);
-
-			const intervalManager = this.#intervalManager;
-			const timeoutManager = this.#timeoutManager;
-			const immediateManager = this.#immediateManager;
-			const clearInterrupts = () => this.#clearInterruptsCounter();
-			
-			const setIntervalHandle = context.newFunction("setInterval", function(callbackArg, delayArg, ...args) {
-				const delayMs = context.getNumber(delayArg);
-				const intervalId = intervalManager.setInterval(context, clearInterrupts, callbackArg, this, delayMs, ...args);
-				return context.newNumber(intervalId);
-			})
-			
-			const clearIntervalHandle = context.newFunction("clearInterval", (intervalIdHandle) => {
-				intervalManager.clearInterval(context.getNumber(intervalIdHandle));
-				return context.undefined;
-			})
-			
-			const setTimeoutHandle = context.newFunction("setTimeout", function(callbackArg, delayArg, ...args) {
-				const delayMs = context.getNumber(delayArg);
-				const timeoutId = timeoutManager.setTimeout(context, clearInterrupts, callbackArg, this, delayMs, ...args);
-				return context.newNumber(timeoutId);
-			})
-			
-			const clearTimeoutHandle = context.newFunction("clearTimeout", (timeoutIdHandle) => {
-				timeoutManager.clearTimeout(context.getNumber(timeoutIdHandle));
-				return context.undefined;
-			})
-			
-			const setImmediateHandle = context.newFunction("setImmediate", function(callbackArg, ...args) {
-				const immediateId = immediateManager.setImmediate(context, clearInterrupts, callbackArg, this, ...args);
-				return context.newNumber(immediateId);
-			})
-			
-			const clearImmediateHandle = context.newFunction("clearImmediate", (immediateIdHandle) => {
-				immediateManager.clearImmediate(context.getNumber(immediateIdHandle));
-				return context.undefined;
-			})
-			
-			context.setProp(context.global, "setInterval", setIntervalHandle);
-			context.setProp(context.global, "clearInterval", clearIntervalHandle);
-			context.setProp(context.global, "setTimeout", setTimeoutHandle);
-			context.setProp(context.global, "clearTimeout", clearTimeoutHandle);
-			context.setProp(context.global, "setImmediate", setImmediateHandle);
-			context.setProp(context.global, "clearImmediate", clearImmediateHandle);
-		});
-
+		try {
+			this.#exports = context.unwrapResult(moduleResult);
+			this.#ownedDisposableItems.add(this.#exports);
+		} catch (error) {
+			this.dispose();
+			throw error;
+		}
 	}
 	
 	#moduleLoader(moduleName: string, context: QuickJSContext): string {
 		const src = this.#sourceConfig.sources[moduleName];
 		if (src == null) throw new Error("module not found: "+moduleName);
+		if (moduleName.startsWith("@varhub/api/")) return "export default null";
 		if (moduleName.endsWith(".js") || moduleName.endsWith(".cjs") || moduleName.endsWith(".mjs")) return src;
 		if (moduleName.endsWith(".json")) return `export default ${src}`;
 		return `export default ${JSON.stringify(src)}`;
@@ -117,22 +88,78 @@ export class QuickJsProgram extends UsingDisposable {
 		let result
 		if (requestModuleName.startsWith(".")) result = url.resolve(baseModuleName, requestModuleName);
 		else result = requestModuleName;
-		if (result === "@varhub/inner" || result.startsWith("@varhub/inner/")) {
-			if (baseModuleName === "@varhub" || baseModuleName.startsWith("@varhub/")) return result;
-			throw new Error("restricted access to @varhub/inner module");
-		}
+		
+		if (result.startsWith("@varhub/api/")) this.#tryLoadApiModule(result.substring(12), context);
+		
+		if (result === "@inner") return `@inner:${baseModuleName}`;
+		if (result.startsWith("@inner:")) throw new Error("inner module invalid");
+		
 		return result;
 	}
 	
-	#interruptsCount = 0;
+	#tryLoadApiModule(apiName: string, context: QuickJSContext){
+		if (this.#options.hasApi?.(apiName)) return;
+		const apiFilename = `@varhub/api/${apiName}`;
+		const innerResult = context.evalCode(
+			`export let handle; export const setHandle = h => handle = h`,
+			`@inner:${apiFilename}`,
+			{type: "module", strict: true}
+		);
+		const apiFn = this.#options.getApi?.(apiName);
+		if (!apiFn) return;
+		Scope.withScope((scope) => {
+			const innerModuleHandle = scope.manage(context.unwrapResult(innerResult));
+			const setHandle = scope.manage(context.getProp(innerModuleHandle, "setHandle"));
+			const thisHandle = scope.manage(context.undefined);
+			const fnHandle = scope.manage(context.newFunction(apiName, (...argHandles) => {
+				const args = argHandles.map(context.dump);
+				const apiResult = apiFn(...args);
+				if (apiResult instanceof Promise) {
+					const promiseHandle = context.newPromise();
+					apiResult.then(promiseHandle.resolve, promiseHandle.reject).finally(() => {
+						promiseHandle.dispose();
+						context.runtime.executePendingJobs();
+					});
+					scope.manage(promiseHandle.handle);
+					return promiseHandle.handle;
+				}
+				let result: QuickJSHandle | undefined;
+				void Scope.withScopeAsync(async (fnScope) => {
+					result = this.#wrap(fnScope, context, apiResult);
+				});
+				return result!
+			}));
+			const callResult = context.callFunction(setHandle, thisHandle, fnHandle);
+			context.unwrapResult(callResult).dispose();
+		})
+		
+		const result = context.evalCode(
+			`import {handle} from "@inner"; export default handle`,
+			apiFilename,
+			{type: "module", strict: true}
+		);
+		context.unwrapResult(result).dispose();
+	}
+	
+	#interruptImmediate: ReturnType<typeof setImmediate> | null = null;
+	#interruptTime: bigint | null = null;
 	#interruptHandler(runtime: QuickJSRuntime): boolean {
-		if (this.#interruptsCount > this.#maxInterrupts) return true;
-		this.#interruptsCount++;
-		return false;
+		if (this.#interruptImmediate == null) {
+			this.#interruptImmediate = setImmediate(() => {
+				this.#interruptImmediate = null;
+				this.#interruptTime = null;
+			});
+			this.#interruptTime = hrtime.bigint();
+			return false;
+		}
+		if (this.#interruptTime == null) return false;
+		const diff = hrtime.bigint() - this.#interruptTime;
+		// console.log("---diff", diff);
+		return diff > this.#maxInterruptTimeNs;
 	}
 	
 	#clearInterruptsCounter(){
-		this.#interruptsCount = 0;
+		//this.#interruptsCount = 0;
 	}
 
 	#wrap(scope: Scope, context: QuickJSContext, data: unknown): QuickJSHandle{
@@ -162,6 +189,10 @@ export class QuickJsProgram extends UsingDisposable {
 	}
 
 	call(methodName: string, thisArg: unknown = undefined, ...args: unknown[]): unknown {
+		if (this.#interruptImmediate != null) {
+			clearImmediate(this.#interruptImmediate);
+			this.#interruptImmediate = null;
+		}
 		const context = this.#context;
 		const callResult = Scope.withScope((scope) => {
 			const wrapArg = this.#wrap.bind(this, scope, context);
@@ -222,206 +253,12 @@ export class QuickJsProgram extends UsingDisposable {
 	}
 	
 	get alive(){
-		return this.#runtime.alive;
+		return this.#context.alive;
 	}
 	
 	dispose() {
-		this.#intervalManager?.dispose();
-		this.#exports?.dispose();
-		this.#context?.dispose();
-		this.#runtime?.dispose();
-	}
-	
-	
-}
-
-class QuickJSIntervalManager extends UsingDisposable {
-	intervalId = 0;
-	#intervalMap: Map<number, [ReturnType<typeof setInterval>, ...UsingDisposable[]]> | null = new Map();
-	readonly #maxIntervals: number;
-	
-	constructor(maxIntervals = Infinity) {
-		super();
-		this.#maxIntervals = maxIntervals;
-	}
-	
-	setInterval(context: QuickJSContext, callback: null | (() => void), callbackVal: QuickJSHandle, thisVal: QuickJSHandle, timer: number, ...args: QuickJSHandle[]): number {
-		if (!this.#intervalMap) throw new Error("intervals disposed");
-		if (this.#intervalMap.size >= this.#maxIntervals) throw new Error("too many intervals");
-		
-		const callbackHandle = callbackVal.dup();
-		const thisHandle = thisVal.dup();
-		const argHandles = args.map(arg => arg.dup());
-		const intervalId = this.intervalId++;
-		if (this.intervalId >= Number.MAX_SAFE_INTEGER) this.intervalId = 0;
-
-		const intervalValue = setInterval(() => {
-			callback?.()
-			const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
-			context.unwrapResult(callResult).dispose();
-			context.runtime.executePendingJobs();
-		}, timer);
-
-		this.#intervalMap.set(intervalId, [intervalValue, callbackHandle, thisHandle, ...argHandles] as const);
-
-		return intervalId;
-	}
-	
-	clearInterval(intervalId: number): void{
-		if (!this.#intervalMap) throw new Error("intervals disposed");
-		const intervalData = this.#intervalMap.get(intervalId);
-		if (!intervalData) return;
-		this.#intervalMap.delete(intervalId);
-		const [intervalValue, ...garbage] = intervalData;
-		clearInterval(intervalValue);
-		for (const disposable of garbage) {
-			disposable.dispose();
+		for (let ownedDisposableItem of this.#ownedDisposableItems) {
+			if (ownedDisposableItem.alive) ownedDisposableItem.dispose();
 		}
-	}
-	
-	get alive(){
-		return this.#intervalMap != null;
-	}
-	
-	dispose() {
-		if (!this.#intervalMap) return;
-		for (const [interval, ...garbage] of this.#intervalMap?.values()) {
-			clearInterval(interval);
-			for (const disposable of garbage) {
-				disposable.dispose();
-			}
-		}
-		this.#intervalMap?.clear();
-		this.#intervalMap = null;
-	}
-}
-
-class QuickJSTimeoutManager extends UsingDisposable {
-	#timeoutId = 0;
-	#timeoutMap: Map<number, [ReturnType<typeof setInterval>, ...UsingDisposable[]]> | null = new Map();
-	readonly #maxTimeouts: number;
-	
-	constructor(maxTimeouts = Infinity) {
-		super();
-		this.#maxTimeouts = maxTimeouts;
-	}
-	
-	setTimeout(context: QuickJSContext, callback: null | (() => void), callbackVal: QuickJSHandle, thisVal: QuickJSHandle, timer: number, ...args: QuickJSHandle[]): number {
-		if (!this.#timeoutMap) throw new Error("timeouts disposed");
-		if (this.#timeoutMap.size >= this.#maxTimeouts) throw new Error("too many timeouts");
-		
-		const callbackHandle = callbackVal.dup();
-		const thisHandle = thisVal.dup();
-		const argHandles = args.map(arg => arg.dup());
-		const timeoutId = this.#timeoutId++;
-		if (this.#timeoutId >= Number.MAX_SAFE_INTEGER) this.#timeoutId = 0;
-		
-		const timeoutValue = setTimeout(() => {
-			callback?.()
-			const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
-			this.#timeoutMap?.delete(timeoutId);
-			for (let disposable of [thisHandle, callbackHandle, ...argHandles]) {
-				disposable.dispose();
-			}
-			context.unwrapResult(callResult).dispose();
-			context.runtime.executePendingJobs();
-		}, timer);
-		
-		this.#timeoutMap.set(timeoutId, [timeoutValue, callbackHandle, thisHandle, ...argHandles] as const);
-		
-		return timeoutId;
-	}
-	
-	clearTimeout(timeoutId: number): void {
-		if (!this.#timeoutMap) throw new Error("timeouts disposed");
-		const timeoutData = this.#timeoutMap.get(timeoutId);
-		if (!timeoutData) return;
-		this.#timeoutMap.delete(timeoutId);
-		const [timeoutValue, ...garbage] = timeoutData;
-		clearTimeout(timeoutValue);
-		for (const disposable of garbage) {
-			disposable.dispose();
-		}
-	}
-	
-	get alive(){
-		return this.#timeoutMap != null;
-	}
-	
-	dispose() {
-		if (!this.#timeoutMap) return;
-		for (const [interval, ...garbage] of this.#timeoutMap.values()) {
-			clearInterval(interval);
-			for (const disposable of garbage) {
-				disposable.dispose();
-			}
-		}
-		this.#timeoutMap.clear();
-		this.#timeoutMap = null;
-	}
-}
-
-class QuickJSImmediateManager extends UsingDisposable {
-	#immediateId = 0;
-	#immediateMap: Map<number, [ReturnType<typeof setImmediate>, ...UsingDisposable[]]> | null = new Map();
-	readonly #maxImmediateItems: number;
-	
-	constructor(maxImmediateItems = Infinity) {
-		super();
-		this.#maxImmediateItems = maxImmediateItems;
-	}
-	
-	setImmediate(context: QuickJSContext, callback: null | (() => void), callbackVal: QuickJSHandle, thisVal: QuickJSHandle, ...args: QuickJSHandle[]): number {
-		if (!this.#immediateMap) throw new Error("immediate disposed");
-		if (this.#immediateMap.size >= this.#maxImmediateItems) throw new Error("too many immediate");
-		
-		const callbackHandle = callbackVal.dup();
-		const thisHandle = thisVal.dup();
-		const argHandles = args.map(arg => arg.dup());
-		const timeoutId = this.#immediateId++;
-		if (this.#immediateId >= Number.MAX_SAFE_INTEGER) this.#immediateId = 0;
-		
-		const immediateValue = setImmediate(() => {
-			callback?.()
-			const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
-			this.#immediateMap?.delete(timeoutId);
-			for (let disposable of [thisHandle, callbackHandle, ...argHandles]) {
-				disposable.dispose();
-			}
-			context.unwrapResult(callResult).dispose();
-			context.runtime.executePendingJobs();
-		});
-		
-		this.#immediateMap.set(timeoutId, [immediateValue, callbackHandle, thisHandle, ...argHandles] as const);
-		
-		return timeoutId;
-	}
-	
-	clearImmediate(immediateId: number): void {
-		if (!this.#immediateMap) throw new Error("timeouts disposed");
-		const immediateData = this.#immediateMap.get(immediateId);
-		if (!immediateData) return;
-		this.#immediateMap.delete(immediateId);
-		const [immediateValue, ...garbage] = immediateData;
-		clearImmediate(immediateValue);
-		for (const disposable of garbage) {
-			disposable.dispose();
-		}
-	}
-	
-	get alive(){
-		return this.#immediateMap != null;
-	}
-	
-	dispose() {
-		if (!this.#immediateMap) return;
-		for (const [immediateValue, ...garbage] of this.#immediateMap.values()) {
-			clearImmediate(immediateValue);
-			for (const disposable of garbage) {
-				disposable.dispose();
-			}
-		}
-		this.#immediateMap.clear();
-		this.#immediateMap = null;
 	}
 }

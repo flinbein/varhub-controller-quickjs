@@ -9,13 +9,14 @@
     "prepare": "husky install"
   },
   "dependencies": {
+    "@jitl/quickjs-ng-wasmfile-release-sync": "^0.29.1",
     "quickjs-emscripten": "^0.29.1"
   },
   "devDependencies": {
-    "@flinbein/varhub": "git+https://github.com/flinbein/varhub#1.2.2",
-    "typescript": "^5.4.3",
+    "@flinbein/varhub": "git+https://github.com/flinbein/varhub#1.2.3",
+    "husky": "^9.0.11",
     "ts-jest": "^29.1.2",
     "ts-node": "^10.9.2",
-    "husky": "^9.0.11"
+    "typescript": "^5.4.3"
   }
 }
