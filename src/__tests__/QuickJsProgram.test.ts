@@ -18,23 +18,18 @@ function sourcesWithApi(
 	apiConstructors: Record<string, () => (...args: any) => any>
 ): QuickJsProgramSource {
 	return (file, program) => {
-		if (file in sourceMap) return sourceMap[file];
-		if (file.startsWith("@varhub/api/") && file.endsWith(":inner")) {
-			return `export let handle; export const setHandle = h => handle = h`;
-		}
-		if (file.startsWith("@varhub/api/")) {
+		if (file.startsWith("@varhub/api/") && !file.includes(":")) {
 			const apiName = file.substring(12);
-			const innerModuleName = file + ":inner";
 			const apiConstructor = apiConstructors[apiName];
 			if (!apiConstructor) return `export default null`;
-			if (!program.hasModule(innerModuleName)) {
-				const innerModule = program.getModule(file+":inner");
-				innerModule.withProxyFunctions([apiConstructor()], ([apiHandle]) => {
-					innerModule.call("setHandle", undefined, apiHandle);
-				});
-			}
-			return `import {handle} from ":inner"; export default handle`
+			const innerModuleCode = `export let h; export let f = x => h = x`
+			const innerModule = program.createModule(file + ":inner", innerModuleCode)
+			innerModule.withProxyFunctions([apiConstructor()], ([apiHandle]) => {
+				innerModule.call("f", undefined, apiHandle);
+			});
+			return `import {h} from ":inner"; export default h`;
 		}
+		if (file in sourceMap) return sourceMap[file];
 	}
 }
 
@@ -64,10 +59,10 @@ describe("test program",() => {
 				}
 			`
 		})
-		
+
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("index.js");
-		
+
 		const result1 = indexModule.call("increment", undefined, 10);
 		assert.equal(result1, 11);
 
@@ -81,14 +76,14 @@ describe("test program",() => {
 		await assert.rejects(async () => {
 			await indexModule.call("throwAsyncIncrement", undefined, 40);
 		}, (error) => error === 41);
-		
+
 		try {
 			await indexModule.call("throwAsyncPromiseIncrement", undefined, 50);
 		} catch (error) {
 			assert.ok(error instanceof Promise, "throws error as promise");
 			assert.equal(await error, 51, "throws error 51");
 		}
-		
+
 		try {
 			await indexModule.call("throwAsyncRejectIncrement", undefined, 60);
 		} catch (error) {
@@ -98,7 +93,7 @@ describe("test program",() => {
 			}, (error) => error === 61);
 		}
 	});
-	
+
 	it("simple getProp", () => {
 		const sourceConfig = sources({
 			"index.js": `
@@ -112,12 +107,12 @@ describe("test program",() => {
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("index.js");
 		assert.equal(indexModule.getProp("value"), 1, "base value is 1");
-		
+
 		indexModule.call("setValue", undefined, 2);
 		assert.equal(indexModule.getProp("value"), 2, "next value is 2");
 
 	});
-	
+
 	it("simple modules", () => {
 		const sourceConfig = sources({
 			"index.js": `
@@ -134,14 +129,14 @@ describe("test program",() => {
 				export const innerSecret = 100;
 			`
 		})
-		
+
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("index.js");
-		
+
 		const result = indexModule.call("add", undefined, 1, 2);
 		assert.equal(result, 3, "call add success");
 		assert.equal(indexModule.getProp("secret"), 100, "secret");
-		
+
 		const secretModule = program.getModule("secret.js");
 		assert.equal(secretModule.getProp("innerSecret"), 100, "inner secret");
 	});
@@ -159,7 +154,7 @@ describe("test program",() => {
 		const indexModule = program.getModule("index.js");
 		assert.equal(indexModule.getProp("foo"), "bar", "json imported");
 	})
-	
+
 	it("simple text", () => {
 		const sourceConfig = sources({
 			"index.js": `
@@ -168,12 +163,12 @@ describe("test program",() => {
 			`,
 			"inner/data.txt": "Hello world"
 		});
-		
+
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("index.js");
 		assert.equal(indexModule.getProp("text"), "Hello world", "txt imported");
 	});
-	
+
 	it("simple auto module", () => {
 		const sourceConfig = sources({
 			"inner/data/index.js": `
@@ -187,7 +182,7 @@ describe("test program",() => {
 			"inner/data/dataJson2.json5": `200`,
 			"inner/data/dataCode": `export default 5`
 		});
-		
+
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("inner/data/index.js");
 		assert.equal(indexModule.getProp("dataText"), "Hello world", "txt imported");
@@ -196,38 +191,24 @@ describe("test program",() => {
 		assert.equal(indexModule.getProp("dataCode"), 5, "code imported");
 	});
 	
-	// it("simple inner module", () => {
-	// 	const sourceConfig = sources({
-	// 		"index.js": `
-	// 			import * as all from ":inner";
-	// 			console.log("ALL", all);
-	// 			export default all;
-	// 		`,
-	// 		"index.js:inner": `
-	// 			console.log('loaded index.js:inner');
-	// 			export const name = "index-inner";
-	// 		`,
-	// 		"evil.js": `
-	// 			console.log('loaded evil');
-	// 			export const name = "holy.js:inner";
-	// 		`,
-	// 		"holy.js:inner": `
-	// 			export const name = "holy-inner";
-	// 		`
-	// 	});
-	//
-	// 	const program = new QuickJsProgram(quickJS, sourceConfig);
-	// 	const indexModule = program.getModule("index.js");
-	// 	console.log("---------", indexModule.dump());
-	// 	assert.equal(indexModule.getProp("name"), "index-inner");
-	//
-	// 	try {
-	// 		const evilModule = program.getModule("evil.js");
-	// 		assert.fail("must throw");
-	// 	} catch (error) {
-	// 		console.log(">>>>>>>>>>>>>>>> ERROR", error);
-	// 	}
-	// })
+	it("simple inner module", () => {
+		const sourceConfig = sources({
+			"index.js":
+				`export * from ":inner";`,
+			"index.js:inner":
+				`export const name = "index-inner";`,
+			"evil.js":
+				`export * from "holy.js:inner";`,
+			"holy.js:inner":
+				`export const name = "holy-inner";`
+		});
+
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const indexModule = program.getModule("index.js");
+		assert.equal(indexModule.getProp("name"), "index-inner");
+
+		assert.throws(() => program.getModule("evil.js"));
+	})
 
 	it("immediate", async () => {
 		const sourceConfig = sources({
@@ -248,7 +229,7 @@ describe("test program",() => {
 		assert.equal(result, 1, "txt imported");
 	})
 
-	it("deadlocks", async () => {
+	it("deadlocks", {timeout: 1000}, async () => {
 		const sourceConfig = sources({
 			"index.js": `
 				export function cycle(x){while (x --> 0);}
@@ -275,7 +256,7 @@ describe("test program",() => {
 		await indexModule.call("asyncCycle", null, 10);
 	});
 
-	it("deadlocks in timeout", async () => {
+	it( "deadlocks in timeout", {timeout: 1000}, async () => {
 		// TODO: asyncDeadlock
 		const sourceConfig = sources({
 			"index.js": `
@@ -287,7 +268,7 @@ describe("test program",() => {
 
 				export async function asyncDeadlock() {
 					while (true) {
-						let x = 1000000;
+						let x = 10000;
 						while (x --> 0);
 						await new Promise(setImmediate);
 					}
@@ -300,13 +281,15 @@ describe("test program",() => {
 		await assert.rejects(async () => {
 			await indexModule.call("asyncCycle", undefined);
 		}, (error: any) => error.message === 'interrupted', "should reject deadlock");
+		
+		await assert.rejects(async () => {
+			await indexModule.call("asyncDeadlock");
+		}, "must dead on asyncDeadlock");
 
 	})
 
 	it("simple api", async () => {
 
-		const apiMap = {} as any;
-		
 		const sourceConfig = sourcesWithApi({
 			"index.js": `
 				export {default as notExist} from "@varhub/api/notExist"
@@ -314,12 +297,12 @@ describe("test program",() => {
 				import repeatThrow from "@varhub/api/repeatThrow"
 				import repeatAsync from "@varhub/api/repeatAsync"
 				import repeatAsyncThrow from "@varhub/api/repeatAsyncThrow"
-				
+
 				export const testRepeat = () => repeat(1,2,3);
 				export const testRepeatThrow = () => repeatThrow(1,2,3);
 				export const testRepeatAsync = () => repeatAsync(1,2,3);
 				export const testRepeatAsyncThrow = () => repeatAsyncThrow(1,2,3);
-				
+
 			`
 		}, {
 			repeat(){
@@ -339,20 +322,20 @@ describe("test program",() => {
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("index.js");
 		assert.equal(indexModule.getProp("notExist"), null);
-		
+
 		assert.deepEqual(indexModule.call("testRepeat"), ["repeat", 1, 2, 3]);
-		
+
 		try {
 			indexModule.call("testRepeatThrow");
 			assert.fail("must throw in testRepeatThrow");
 		} catch (error){
 			assert.deepEqual(error, ["repeatThrow", 1, 2, 3]);
 		}
-		
+
 		const resultOfAsync = indexModule.call("testRepeatAsync");
 		assert.ok(resultOfAsync instanceof Promise, "result of testRepeatAsync is promise");
 		assert.deepEqual(await resultOfAsync, ["repeatAsync", 1, 2, 3]);
-		
+
 		const resultOfAsyncThrow = indexModule.call("testRepeatAsyncThrow");
 		assert.ok(resultOfAsyncThrow instanceof Promise, "result of testRepeatAsyncThrow is promise");
 		try {

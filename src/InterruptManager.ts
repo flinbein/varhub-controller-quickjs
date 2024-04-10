@@ -8,30 +8,35 @@ export class InterruptManager {
 	}
 	
 	#interruptImmediate: ReturnType<typeof setImmediate> | undefined = undefined;
-	#interruptTime: bigint | undefined = undefined;
+	#interruptTime = 0n;
+	
+	#interruptTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
+	#interruptTimeSum = 0n;
+	
 	onInterrupt = () => {
+		if (this.#interruptTimeout == null) {
+			this.#interruptTimeSum = 0n;
+			this.#interruptTimeout = setTimeout(() => {
+				this.#interruptTimeout = undefined;
+			}, 10);
+		}
+		
 		if (this.#interruptImmediate == null) {
 			this.#interruptImmediate = setImmediate(() => {
 				this.#interruptImmediate = undefined;
-				this.#interruptTime = undefined;
+				this.#interruptTimeSum += hrtime.bigint() - this.#interruptTime;
 			});
 			this.#interruptTime = hrtime.bigint();
-			return false;
 		}
-		if (this.#interruptTime == null) return false;
 		const diff = hrtime.bigint() - this.#interruptTime;
 		if (diff > this.#maxExecutionTimeNs) return true;
+		return this.#interruptTimeSum > 10_000_000n / 5n;
 		
-		return false;
+		
 	}
 	
 	clear(){
 		this.#interruptImmediate = undefined;
-		this.#interruptTime = undefined;
-	}
-	
-	readonly alive: boolean = true;
-	
-	dispose() {
+		this.#interruptTimeout = undefined;
 	}
 }
