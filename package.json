@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "node --import=./test/register.js --test **/*.test.*",
+    "test": "node --import=./test/register.js --test --test-reporter spec **/*.test.*",
     "prepare": "husky install"
   },
   "dependencies": {

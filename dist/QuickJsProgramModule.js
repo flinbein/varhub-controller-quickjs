@@ -12,7 +12,24 @@ export class QuickJsProgramModule extends UsingDisposable {
     }
     call(methodName, thisArg = undefined, ...args) {
         const context = this.#context;
-        const callResult = Scope.withScope((scope) => {
+        const callResult = this.#callFunction(methodName, thisArg, ...args);
+        if (!("value" in callResult)) {
+            throw this.#dumpPromisify(context, callResult.error);
+        }
+        return this.#dumpPromisify(context, callResult.value);
+    }
+    withCallResult(methodName, thisArg, args, fnAction, errorAction) {
+        return Scope.withScope((scope => {
+            const callResult = this.#callFunction(methodName, thisArg, ...args);
+            if (!("value" in callResult)) {
+                return errorAction?.(scope.manage(callResult.error));
+            }
+            return fnAction?.(scope.manage(callResult.value));
+        }));
+    }
+    #callFunction(methodName, thisArg = undefined, ...args) {
+        const context = this.#context;
+        return Scope.withScope((scope) => {
             const wrapArg = this.#wrap.bind(this, scope, context);
             const methodHandle = scope.manage(context.getProp(this.#exports, methodName));
             const typeOfMethod = context.typeof(methodHandle);
@@ -24,10 +41,6 @@ export class QuickJsProgramModule extends UsingDisposable {
             this.#interruptManager.clear();
             return context.callFunction(methodHandle, thisArgHandle, ...argsHandle);
         });
-        if (!("value" in callResult)) {
-            throw this.#dumpPromisify(context, callResult.error);
-        }
-        return this.#dumpPromisify(context, callResult.value);
     }
     withProxyFunctions(fnList, fnAction) {
         const context = this.#context;
@@ -60,7 +73,7 @@ export class QuickJsProgramModule extends UsingDisposable {
                     }
                 }));
             });
-            return fnAction(fnHandleList);
+            return fnAction(...fnHandleList);
         });
     }
     #wrap(scope, context, data) {
@@ -133,6 +146,12 @@ export class QuickJsProgramModule extends UsingDisposable {
         const result = this.#context.dump(propHandle);
         propHandle.dispose();
         return result;
+    }
+    withProps(propNames, fnAction) {
+        return Scope.withScope((scope) => {
+            const handles = propNames.map(prop => scope.manage(this.#context.getProp(this.#exports, prop)));
+            return fnAction(...handles);
+        });
     }
     dump() {
         return this.#context.dump(this.#exports);

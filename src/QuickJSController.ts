@@ -7,14 +7,10 @@ interface QuickJSControllerConfig {
 	apiConstructorMap?: ApiHelperMap
 }
 export class QuickJSController {
-	#playerController: PlayerController;
-	#apiController: ApiHelperController;
 	#rpcController: RPCController;
 	
 	constructor(room: Room, source: any, options: QuickJSControllerConfig) {
-		this.#playerController = options?.playerController ?? new PlayerController(room);
 		this.#rpcController = new RPCController(room, this.#rpc.bind(this));
-		this.#apiController = options.apiController ?? new ApiHelperController(room, options.apiConstructorMap ?? {});
 	}
 	
 	#rpc(connection: Connection, ...args: any[]){

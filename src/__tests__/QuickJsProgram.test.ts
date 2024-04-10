@@ -24,7 +24,7 @@ function sourcesWithApi(
 			if (!apiConstructor) return `export default null`;
 			const innerModuleCode = `export let h; export let f = x => h = x`
 			const innerModule = program.createModule(file + ":inner", innerModuleCode)
-			innerModule.withProxyFunctions([apiConstructor()], ([apiHandle]) => {
+			innerModule.withProxyFunctions([apiConstructor()], (apiHandle) => {
 				innerModule.call("f", undefined, apiHandle);
 			});
 			return `import {h} from ":inner"; export default h`;
@@ -111,6 +111,76 @@ describe("test program",() => {
 		indexModule.call("setValue", undefined, 2);
 		assert.equal(indexModule.getProp("value"), 2, "next value is 2");
 
+	});
+	
+	it("with props", async () => {
+		const sourceConfig = sources({
+			"index.js": `
+				export const a = {};
+				export const b = {};
+				export const isA = (x) => x === a;
+			`
+		})
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const indexModule = program.getModule("index.js");
+		const result = indexModule.withProps(["a", "b"], (aHandle, bHandle) => {
+			return {
+				aIsA: indexModule.call("isA", undefined, aHandle),
+				bIsA: indexModule.call("isA", undefined, bHandle)
+			}
+		});
+		assert.equal(result.aIsA, true, "a is a");
+		assert.equal(result.bIsA, false, "b is a");
+	});
+	
+	it("with call result", async () => {
+		const sourceConfig = sources({
+			"index.js": `
+				const a = {};
+				const b = {};
+				export const getA = () => a;
+				export const getB = () => b;
+				export const isA = (x) => x === a;
+			`
+		})
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const indexModule = program.getModule("index.js");
+		
+		const result = indexModule.withCallResult("getA", undefined, [], (aHandle) => {
+			return indexModule.call("isA", undefined, aHandle);
+		});
+		assert.equal(result, true, "a is a");
+		
+		const result2 = indexModule.withCallResult("getB", undefined, [], (aHandle) => {
+			return indexModule.call("isA", undefined, aHandle);
+		});
+		assert.equal(result2, false, "b is a");
+	});
+	
+	it("with call error", async () => {
+		const sourceConfig = sources({
+			"index.js": `
+				const a = {};
+				const b = {};
+				export const throwA = () => {throw a};
+				export const throwB = () => {throw b};
+				export const isA = (x) => x === a;
+			`
+		})
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const indexModule = program.getModule("index.js");
+		const result = indexModule.withCallResult("throwA", undefined, [], undefined, (aHandle) => {
+			return indexModule.call("isA", undefined, aHandle);
+		});
+		assert.equal(result, true, "a is a");
+		
+		const result2 = indexModule.withCallResult("throwB", undefined, [], undefined, (aHandle) => {
+			return indexModule.call("isA", undefined, aHandle);
+		});
+		assert.equal(result2, false, "b is a");
 	});
 
 	it("simple modules", () => {
