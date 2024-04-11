@@ -1,10 +1,11 @@
 import { QuickJSContext, QuickJSHandle, QuickJSWASMModule, Scope, UsingDisposable } from "quickjs-emscripten"
 import url from 'node:url';
 import { QuickJSImmediateManager, QuickJSIntervalManager, QuickJSTimeoutManager } from "./scope/TimeManagers.js"
+import { wrap } from "./utils/wrapper.js"
 import { ConsoleManager } from "./scope/ConsoleManager.js";
 import { InterruptManager } from "./InterruptManager.js";
 import { QuickJsProgramModule } from "./QuickJsProgramModule.js";
-import { JSModuleNormalizeResult } from "quickjs-emscripten-core";
+import { JSModuleNormalizeResult, Lifetime, VmCallResult } from "quickjs-emscripten-core";
 
 export interface QuickJsProgramSource {
 	(file: string, program: QuickJsProgram): string | undefined
@@ -121,6 +122,43 @@ export class QuickJsProgram extends UsingDisposable {
 		if (ext === "js" || ext === "mjs" || ext === "cjs") return src;
 		if (ext === "json" || ext === "json5") return `export default ${src}`;
 		return `export default ${JSON.stringify(src)}`;
+	}
+	
+	withProxyFunctions<T>(fnList: ((...args: any[]) => any)[], fnAction: (...fnHandleList: QuickJSHandle[]) => T): T{
+		const context = this.#context;
+		return Scope.withScope((scope) => {
+			const fnHandleList = fnList.map(fn => {
+				return scope.manage(context.newFunction(fn.name, (...argHandles) => {
+					const args = argHandles.map(context.dump);
+					try {
+						const apiResult = fn(...args);
+						if (apiResult instanceof Promise) {
+							const promiseHandle = context.newPromise();
+							apiResult.then(
+								v => Scope.withScope((scope) => promiseHandle.resolve(wrap(scope, context, v))),
+								v => Scope.withScope((scope) => promiseHandle.reject(wrap(scope, context, v))),
+							).finally(() => {
+								promiseHandle.dispose();
+								context.runtime.executePendingJobs();
+							});
+							return promiseHandle.handle;
+						}
+						let result: QuickJSHandle | undefined;
+						void Scope.withScopeAsync(async (fnScope) => {
+							result = wrap(fnScope, context, apiResult);
+						});
+						return result!
+					} catch (error) {
+						let result: QuickJSHandle | undefined;
+						void Scope.withScopeAsync(async (fnScope) => {
+							result = wrap(fnScope, context, error);
+						});
+						return {error: result} as VmCallResult<QuickJSHandle>;
+					}
+				}));
+			});
+			return fnAction(...fnHandleList);
+		})
 	}
 	
 	get alive(){
