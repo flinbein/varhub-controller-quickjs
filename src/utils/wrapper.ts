@@ -200,7 +200,7 @@ export class ShortLifeValueWrapper extends ShortLifeContextWrapper {
 		try {
 			return this.call(thisArg, ...args).dump();
 		} catch (error: any){
-			throw error.dump()
+			throw error.dump();
 		}
 	}
 	

@@ -2,10 +2,6 @@ import { default as assert } from "node:assert";
 import { describe, it } from "node:test";
 import { QuickJsProgram, QuickJsProgramSource } from "../QuickJsProgram.js"
 
-// import { newQuickJSWASMModuleFromVariant } from "quickjs-emscripten-core"
-// import releaseVariant from "@jitl/quickjs-ng-wasmfile-release-sync"
-// const quickJS = await newQuickJSWASMModuleFromVariant(releaseVariant as any);
-
 import { getQuickJS } from "quickjs-emscripten"
 const quickJS = await getQuickJS();
 
@@ -18,16 +14,16 @@ function sourcesWithApi(
 	apiConstructors: Record<string, () => (...args: any) => any>
 ): QuickJsProgramSource {
 	return (file, program) => {
-		if (file.startsWith("@varhub/api/") && !file.includes(":")) {
+		if (file.startsWith("@varhub/api/") && !file.includes("#")) {
 			const apiName = file.substring(12);
 			const apiConstructor = apiConstructors[apiName];
 			if (!apiConstructor) return `export default null`;
 			const innerModuleCode = `export let h; export let f = x => h = x`
-			const innerModule = program.createModule(file + ":inner", innerModuleCode)
+			const innerModule = program.createModule(file + "#inner", innerModuleCode)
 			innerModule.withModule(wrapper => {
 				wrapper.callMethod("f", wrapper.newFunction(apiConstructor()))
 			});
-			return `import {h} from ":inner"; export default h`;
+			return `import {h} from "#inner"; export default h`;
 		}
 		if (file in sourceMap) return sourceMap[file];
 	}
@@ -36,7 +32,7 @@ function sourcesWithApi(
 describe("test program",() => {
 	it("simple methods", async () => {
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				export function increment(x){
 					return x+1;
 				}
@@ -59,7 +55,7 @@ describe("test program",() => {
 				}
 			`
 		})
-		
+
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("index.js");
 
@@ -96,7 +92,7 @@ describe("test program",() => {
 
 	it("simple getProp", () => {
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				export let value = 1;
 				export function setValue(x){
 					value = x;
@@ -115,7 +111,7 @@ describe("test program",() => {
 
 	it("with props", async () => {
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				export const a = {};
 				export const b = {};
 				export const isA = (x) => x === a;
@@ -134,7 +130,7 @@ describe("test program",() => {
 
 	it("with call result", async () => {
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				const a = {};
 				const b = {};
 				export const getA = () => a;
@@ -161,7 +157,7 @@ describe("test program",() => {
 
 	it("with call error", async () => {
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				const a = {};
 				const b = {};
 				export const throwA = () => {throw a};
@@ -195,17 +191,17 @@ describe("test program",() => {
 
 	it("simple modules", () => {
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				export * from "inner/methods.js";
 			`,
-			"inner/methods.js": `
+			"inner/methods.js": /* language=JavaScript */ `
 				import {innerSecret as secret} from "../secret.js";
 				export function add(a, b){
 					return a+b;
 				}
 				export {secret};
 			`,
-			"secret.js": `
+			"secret.js": /* language=JavaScript */ `
 				export const innerSecret = 100;
 			`
 		})
@@ -223,11 +219,11 @@ describe("test program",() => {
 
 	it("simple json", () => {
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				import data from "inner/data.json";
 				export const foo = data.foo;
 			`,
-			"inner/data.json": `{"foo": "bar"}`
+			"inner/data.json": /* language=JSON */  `{"foo": "bar"}`
 		})
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
@@ -237,7 +233,7 @@ describe("test program",() => {
 
 	it("simple text", () => {
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				import data from "inner/data.txt";
 				export {data as text}
 			`,
@@ -251,16 +247,16 @@ describe("test program",() => {
 
 	it("simple auto module", () => {
 		const sourceConfig = sources({
-			"inner/data/index.js": `
+			"inner/data/index.js": /* language=JavaScript */ `
 				export {default as dataText} from "./dataText.txt";
 				export {default as dataJson} from "./dataJson";
 				export {default as dataJson2} from "./dataJson2";
 				export {default as dataCode} from "./dataCode";
 			`,
 			"inner/data/dataText.txt": "Hello world",
-			"inner/data/dataJson.json": `100`,
-			"inner/data/dataJson2.json5": `200`,
-			"inner/data/dataCode": `export default 5`
+			"inner/data/dataJson.json": /* language=JSON */ `100`,
+			"inner/data/dataJson2.json5": /* language=JSON5 */ `200`,
+			"inner/data/dataCode": /* language=JavaScript */ `export default 5`
 		});
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
@@ -273,14 +269,10 @@ describe("test program",() => {
 
 	it("simple inner module", () => {
 		const sourceConfig = sources({
-			"index.js":
-				`export * from ":inner";`,
-			"index.js:inner":
-				`export const name = "index-inner";`,
-			"evil.js":
-				`export * from "holy.js:inner";`,
-			"holy.js:inner":
-				`export const name = "holy-inner";`
+			"index.js": /* language=JavaScript */ `export * from "#inner";`,
+			"index.js#inner": /* language=JavaScript */ `export const name = "index-inner";`,
+			"evil.js": /* language=JavaScript */ `export * from "holy.js#inner";`,
+			"holy.js#inner": /* language=JavaScript */ `export const name = "holy-inner";`
 		});
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
@@ -292,7 +284,7 @@ describe("test program",() => {
 
 	it("immediate", async () => {
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				export function test() {
 					return new Promise(r => {
 						let x = 0;
@@ -311,7 +303,7 @@ describe("test program",() => {
 
 	it("deadlocks", {timeout: 1000}, async () => {
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				export function cycle(x){while (x --> 0);}
 				export async function asyncCycle(x){while (x --> 0);}
 			`
@@ -337,9 +329,8 @@ describe("test program",() => {
 	});
 
 	it( "deadlocks in timeout", {timeout: 1000}, async () => {
-		// TODO: asyncDeadlock
 		const sourceConfig = sources({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				export async function asyncCycle(){
 					await new Promise(r => setTimeout(r, 1));
 					while (true);
@@ -371,7 +362,7 @@ describe("test program",() => {
 	it("simple api", async () => {
 
 		const sourceConfig = sourcesWithApi({
-			"index.js": `
+			"index.js": /* language=JavaScript */ `
 				export {default as notExist} from "@varhub/api/notExist"
 				import repeat from "@varhub/api/repeat"
 				import repeatThrow from "@varhub/api/repeatThrow"

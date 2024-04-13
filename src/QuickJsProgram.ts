@@ -6,14 +6,20 @@ import { ConsoleManager } from "./scope/ConsoleManager.js";
 import { InterruptManager } from "./InterruptManager.js";
 import { QuickJsProgramModule } from "./QuickJsProgramModule.js";
 
+export interface QuickJsProgramModuleSource {
+	source: string,
+	afterCreate?: (module: QuickJsProgramModule, program: QuickJsProgram) => void
+	builtin?: boolean
+}
 export interface QuickJsProgramSource {
-	(file: string, program: QuickJsProgram): string | undefined
+	(file: string, program: QuickJsProgram): string | void | QuickJsProgramModuleSource
 }
 
 export class QuickJsProgram extends UsingDisposable {
+	#alive = true;
 	readonly #getSource: QuickJsProgramSource
 	
-	readonly #context: QuickJSContext
+	readonly #context: QuickJSContext;
 	readonly #intervalManager = new QuickJSIntervalManager(5000);
 	readonly #timeoutManager = new QuickJSTimeoutManager(5000);
 	readonly #immediateManager = new QuickJSImmediateManager(5000);
@@ -26,6 +32,7 @@ export class QuickJsProgram extends UsingDisposable {
 		this.#immediateManager,
 	]);
 	readonly #moduleMap = new Map<string, QuickJsProgramModule>;
+	readonly #builtinModules = new Set<string>;
 	
 	constructor(quickJS: QuickJSWASMModule, getSource: QuickJsProgramSource) {
 		super();
@@ -50,23 +57,24 @@ export class QuickJsProgram extends UsingDisposable {
 		throw new Error(`module loading error: ${moduleName}`);
 	}
 	
-	
 	#moduleNormalizer(baseModuleName: string, importText: string, context: QuickJSContext): string {
-		if (importText.startsWith(":")) {
+		if (importText.startsWith("#")) {
 			const moduleName = baseModuleName + importText;
 			if (!this.getModule(moduleName)) return this.#createModuleErrorText(baseModuleName, importText);
 			return moduleName;
 		}
 		
-		if (importText.includes(":")) return this.#createModuleErrorText(baseModuleName, importText);
+		if (importText.includes("#") && !this.#builtinModules.has(baseModuleName)) {
+			return this.#createModuleErrorText(baseModuleName, importText);
+		}
 		
 		const moduleName = importText.startsWith(".") ? url.resolve(baseModuleName, importText) : importText;
-		if (!this.getModule(moduleName))  return this.#createModuleErrorText(baseModuleName, importText);
+		if (!this.getModule(moduleName)) return this.#createModuleErrorText(baseModuleName, importText);
 		return moduleName;
 	}
 	
 	#createModuleErrorText(base: string, importText: string){
-		return `${JSON.stringify(String(importText))} not found from ${JSON.stringify(String(base))} `
+		return `${JSON.stringify(String(importText))} not found from ${JSON.stringify(String(base))}`
 	}
 	
 	getLoadedModules(): Set<string>{
@@ -76,15 +84,21 @@ export class QuickJsProgram extends UsingDisposable {
 	getModule(moduleName: string): QuickJsProgramModule {
 		const loadedModule = this.#moduleMap.get(moduleName);
 		if (loadedModule) return loadedModule;
-		const moduleHandle = this.#createModule(this.#context, moduleName);
-		const module = new QuickJsProgramModule(this.#interruptManager, this.#context, moduleHandle);
+		
+		const srcResult = this.#getModuleSource(moduleName);
+		const src = typeof srcResult === "string" ? srcResult : srcResult.source;
+		const afterCreate = typeof srcResult === "string" ? undefined : srcResult.afterCreate;
+		const builtin = typeof srcResult === "string" ? false : srcResult.builtin;
+		const handle = this.#createModuleBySource(this.#context, moduleName, src, builtin);
+		const module = new QuickJsProgramModule(this.#interruptManager, this.#context, handle);
 		this.#moduleMap.set(moduleName, module);
+		afterCreate?.(module, this);
 		return module;
 	}
 	
-	createModule(moduleName: string, src: string): QuickJsProgramModule {
+	createModule(moduleName: string, src: string, builtin?: boolean): QuickJsProgramModule {
 		if (this.#moduleMap.has(moduleName)) throw new Error(`Module already exists: ${moduleName}`);
-		const moduleHandle = this.#createModuleBySource(this.#context, moduleName, src);
+		const moduleHandle = this.#createModuleBySource(this.#context, moduleName, src, builtin);
 		const module = new QuickJsProgramModule(this.#interruptManager, this.#context, moduleHandle);
 		this.#moduleMap.set(moduleName, module);
 		return module;
@@ -94,12 +108,8 @@ export class QuickJsProgram extends UsingDisposable {
 		return this.#moduleMap.has(moduleName);
 	}
 	
-	#createModule(context: QuickJSContext, moduleName: string): QuickJSHandle {
-		const src = this.#getModuleSource(moduleName);
-		return this.#createModuleBySource(context, moduleName, src);
-	}
-	
-	#createModuleBySource(context: QuickJSContext, moduleName: string, src: string): QuickJSHandle {
+	#createModuleBySource(context: QuickJSContext, moduleName: string, src: string, builtin?: boolean): QuickJSHandle {
+		if (builtin) this.#builtinModules.add(moduleName);
 		const evalHandle = context.evalCode(src, moduleName, {type: "module", strict: true, strip: true});
 		if ("value" in evalHandle) return evalHandle.value;
 		throw Scope.withScope((scope) => {
@@ -108,7 +118,7 @@ export class QuickJsProgram extends UsingDisposable {
 	}
 	
 	#getModuleSource(moduleName: string){
-		let ext = moduleName.match(/\.([^/.:]+$)/)?.[1];
+		let ext = moduleName.match(/\.([^/.:#]+$)/)?.[1];
 		let src = this.#getSource(moduleName, this);
 		if (!ext && !src) {
 			for (ext of ["js", "mjs", "cjs", "json", "json5"]) {
@@ -130,15 +140,20 @@ export class QuickJsProgram extends UsingDisposable {
 	}
 	
 	get alive(){
-		return this.#context.alive;
+		return this.#alive;
 	}
 	
 	dispose() {
-		for (let module of this.#moduleMap.values()) {
-			if (module.alive) module.dispose();
-		}
-		for (let ownedDisposableItem of this.#ownedDisposableItems) {
-			if (ownedDisposableItem.alive) ownedDisposableItem.dispose();
-		}
+		this.#alive = false;
+		// wait for complete current jobs
+		setImmediate(() => {
+			for (let module of this.#moduleMap.values()) {
+				if (module.alive) module.dispose();
+			}
+			for (let ownedDisposableItem of this.#ownedDisposableItems) {
+				if (ownedDisposableItem.alive) ownedDisposableItem.dispose();
+			}
+		});
+		
 	}
 }
