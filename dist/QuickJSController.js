@@ -1,5 +1,6 @@
 import { PlayerController, RPCController } from "@flinbein/varhub";
 import { QuickJsProgram } from "./QuickJsProgram.js";
+import { RoomModuleHelper } from "./RoomModuleHelper.js";
 export class QuickJSController {
     #room;
     #rpcController;
@@ -7,13 +8,14 @@ export class QuickJSController {
     #program;
     #main;
     #source;
-    constructor(room, quickJS, conf) {
+    constructor(room, quickJS, conf /* TODO: add API */) {
         this.#room = room;
         room.on("destroy", this.#onDestroy.bind(this));
         this.#source = { ...conf.source };
         this.#rpcController = new RPCController(room, this.#rpc.bind(this));
         this.#playerController = new PlayerController(room);
         this.#program = new QuickJsProgram(quickJS, this.#getSource.bind(this));
+        new RoomModuleHelper(room, this.#playerController, this.#program);
         this.#main = this.#program.getModule(conf.main);
     }
     #rpc(connection, methodName, ...args) {
@@ -29,6 +31,7 @@ export class QuickJSController {
         return this.#main.call(methodName, { player: playerId }, ...args);
     }
     #getSource(file) {
+        // TODO: add api sources
         return this.#source[file];
     }
     #onDestroy() {

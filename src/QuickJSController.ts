@@ -1,8 +1,8 @@
-import { PlayerController, RPCController, ApiHelperController, Room, Connection } from "@flinbein/varhub";
+import type { QuickJSWASMModule } from "quickjs-emscripten";
+import type { QuickJsProgramModule } from "./QuickJsProgramModule.js";
+import { PlayerController, RPCController, type Room, type Connection } from "@flinbein/varhub";
 import { QuickJsProgram } from "./QuickJsProgram.js";
-import { QuickJSWASMModule } from "quickjs-emscripten";
-import { QuickJsProgramModule } from "./QuickJsProgramModule.js";
-type ApiHelperMap = ConstructorParameters<typeof ApiHelperController>[1];
+import { RoomModuleHelper } from "./RoomModuleHelper.js";
 
 
 interface QuickJSControllerCode {
@@ -10,20 +10,21 @@ interface QuickJSControllerCode {
 	source: Record<string, string>
 }
 export class QuickJSController {
-	#room: Room;
-	#rpcController: RPCController;
-	#playerController: PlayerController;
-	#program: QuickJsProgram;
-	#main: QuickJsProgramModule;
-	#source: Record<string, string>
+	readonly #room: Room;
+	readonly #rpcController: RPCController;
+	readonly #playerController: PlayerController;
+	readonly #program: QuickJsProgram;
+	readonly #main: QuickJsProgramModule;
+	readonly #source: Record<string, string>
 	
-	constructor(room: Room, quickJS: QuickJSWASMModule, conf: QuickJSControllerCode) {
+	constructor(room: Room, quickJS: QuickJSWASMModule, conf: QuickJSControllerCode /* TODO: add API */) {
 		this.#room = room;
-		room.on("destroy", this.#onDestroy.bind(this))
-		this.#source = {...conf.source}
+		room.on("destroy", this.#onDestroy.bind(this));
+		this.#source = {...conf.source};
 		this.#rpcController = new RPCController(room, this.#rpc.bind(this));
 		this.#playerController = new PlayerController(room);
 		this.#program = new QuickJsProgram(quickJS, this.#getSource.bind(this));
+		new RoomModuleHelper(room, this.#playerController, this.#program);
 		this.#main = this.#program.getModule(conf.main);
 	}
 	
@@ -38,6 +39,7 @@ export class QuickJSController {
 	}
 	
 	#getSource(file: string): string|undefined {
+		// TODO: add api sources
 		return this.#source[file];
 	}
 	

@@ -2,12 +2,12 @@ import { default as assert } from "node:assert";
 import { describe, it } from "node:test";
 import { QuickJsProgram, QuickJsProgramSource } from "../QuickJsProgram.js"
 
-import { newQuickJSWASMModuleFromVariant } from "quickjs-emscripten-core"
-import releaseVariant from "@jitl/quickjs-ng-wasmfile-release-sync"
-const quickJS = await newQuickJSWASMModuleFromVariant(releaseVariant as any);
+// import { newQuickJSWASMModuleFromVariant } from "quickjs-emscripten-core"
+// import releaseVariant from "@jitl/quickjs-ng-wasmfile-release-sync"
+// const quickJS = await newQuickJSWASMModuleFromVariant(releaseVariant as any);
 
-// import { getQuickJS } from "quickjs-emscripten"
-//const quickJS = await getQuickJS();
+import { getQuickJS } from "quickjs-emscripten"
+const quickJS = await getQuickJS();
 
 function sources(sourceMap: Record<string, string>): QuickJsProgramSource {
 	return (file: string) => sourceMap[file];
@@ -24,8 +24,8 @@ function sourcesWithApi(
 			if (!apiConstructor) return `export default null`;
 			const innerModuleCode = `export let h; export let f = x => h = x`
 			const innerModule = program.createModule(file + ":inner", innerModuleCode)
-			innerModule.withProxyFunctions([apiConstructor()], (apiHandle) => {
-				innerModule.call("f", undefined, apiHandle);
+			innerModule.withModule(wrapper => {
+				wrapper.callMethod("f", wrapper.newFunction(apiConstructor()))
 			});
 			return `import {h} from ":inner"; export default h`;
 		}
@@ -59,7 +59,7 @@ describe("test program",() => {
 				}
 			`
 		})
-
+		
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("index.js");
 
@@ -112,7 +112,7 @@ describe("test program",() => {
 		assert.equal(indexModule.getProp("value"), 2, "next value is 2");
 
 	});
-	
+
 	it("with props", async () => {
 		const sourceConfig = sources({
 			"index.js": `
@@ -121,19 +121,17 @@ describe("test program",() => {
 				export const isA = (x) => x === a;
 			`
 		})
-		
+
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("index.js");
-		const result = indexModule.withProps(["a", "b"], (aHandle, bHandle) => {
-			return {
-				aIsA: indexModule.call("isA", undefined, aHandle),
-				bIsA: indexModule.call("isA", undefined, bHandle)
-			}
-		});
+		const result = indexModule.withModule(module => ({
+			aIsA: indexModule.call("isA", undefined, module.getProp("a")),
+			bIsA: indexModule.call("isA", undefined, module.getProp("b"))
+		}))
 		assert.equal(result.aIsA, true, "a is a");
 		assert.equal(result.bIsA, false, "b is a");
 	});
-	
+
 	it("with call result", async () => {
 		const sourceConfig = sources({
 			"index.js": `
@@ -144,21 +142,23 @@ describe("test program",() => {
 				export const isA = (x) => x === a;
 			`
 		})
-		
+
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("index.js");
-		
-		const result = indexModule.withCallResult("getA", undefined, [], (aHandle) => {
+
+		const result = indexModule.withModule((wrapper) => {
+			const aHandle = wrapper.callMethod("getA");
 			return indexModule.call("isA", undefined, aHandle);
 		});
 		assert.equal(result, true, "a is a");
-		
-		const result2 = indexModule.withCallResult("getB", undefined, [], (aHandle) => {
+
+		const result2 = indexModule.withModule((wrapper) => {
+			const aHandle = wrapper.callMethod("getB");
 			return indexModule.call("isA", undefined, aHandle);
-		});
+		})
 		assert.equal(result2, false, "b is a");
 	});
-	
+
 	it("with call error", async () => {
 		const sourceConfig = sources({
 			"index.js": `
@@ -169,17 +169,27 @@ describe("test program",() => {
 				export const isA = (x) => x === a;
 			`
 		})
-		
+
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.getModule("index.js");
-		const result = indexModule.withCallResult("throwA", undefined, [], undefined, (aHandle) => {
-			return indexModule.call("isA", undefined, aHandle);
-		});
+		const result = indexModule.withModule((wrapper) => {
+			try {
+				wrapper.callMethod("throwA");
+			} catch (aHandle) {
+				return indexModule.call("isA", undefined, aHandle);
+			}
+			throw new Error("a is not thrown");
+		})
 		assert.equal(result, true, "a is a");
-		
-		const result2 = indexModule.withCallResult("throwB", undefined, [], undefined, (aHandle) => {
-			return indexModule.call("isA", undefined, aHandle);
-		});
+
+		const result2 = indexModule.withModule((wrapper) => {
+			try {
+				wrapper.callMethod("throwB");
+			} catch (bHandle) {
+				return indexModule.call("isA", undefined, bHandle);
+			}
+			throw new Error("b is not thrown");
+		})
 		assert.equal(result2, false, "b is a");
 	});
 
@@ -260,7 +270,7 @@ describe("test program",() => {
 		assert.equal(indexModule.getProp("dataJson2"), 200, "json 2 imported");
 		assert.equal(indexModule.getProp("dataCode"), 5, "code imported");
 	});
-	
+
 	it("simple inner module", () => {
 		const sourceConfig = sources({
 			"index.js":
@@ -351,7 +361,7 @@ describe("test program",() => {
 		await assert.rejects(async () => {
 			await indexModule.call("asyncCycle", undefined);
 		}, (error: any) => error.message === 'interrupted', "should reject deadlock");
-		
+
 		await assert.rejects(async () => {
 			await indexModule.call("asyncDeadlock");
 		}, "must dead on asyncDeadlock");
