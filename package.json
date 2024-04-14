@@ -1,6 +1,6 @@
 {
   "name": "varhub-controller-quickjs",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "node": ">=20.0.0",
   "type": "module",
   "types": "./src/index.ts",
@@ -14,7 +14,7 @@
     "quickjs-emscripten": "^0.29.1"
   },
   "devDependencies": {
-    "@flinbein/varhub": "git+https://github.com/flinbein/varhub#1.3.2",
+    "@flinbein/varhub": "git+https://github.com/flinbein/varhub#1.3.4",
     "husky": "^9.0.11",
     "ts-jest": "^29.1.2",
     "ts-node": "^10.9.2",
