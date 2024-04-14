@@ -12,10 +12,11 @@ export interface QuickJSControllerCode {
 	source: Record<string, string>
 }
 
-export interface ControllerConfig {
+export interface ControllerOptions {
 	apiHelperController?: ApiHelperController,
 	playerController?: PlayerController;
 	rpcController?: RPCController;
+	config?: {};
 }
 
 export class QuickJSController implements Disposable {
@@ -26,16 +27,18 @@ export class QuickJSController implements Disposable {
 	readonly #playerController: PlayerController;
 	readonly #program: QuickJsProgram;
 	readonly #main: QuickJsProgramModule;
-	readonly #source: Record<string, string>
+	readonly #source: Record<string, string>;
+	readonly #configJson: string;
 	
-	constructor(room: Room, quickJS: QuickJSWASMModule, code: QuickJSControllerCode, config: ControllerConfig = {}) {
+	constructor(room: Room, quickJS: QuickJSWASMModule, code: QuickJSControllerCode, options: ControllerOptions = {}) {
 		try {
 			this.#room = room;
 			room.on("destroy", this[Symbol.dispose].bind(this));
-			const apiCtrl = this.#apiHelperController = config.apiHelperController;
-			const rpcCtrl = this.#rpcController = config.rpcController ?? new RPCController(room);
-			const playerCtrl = this.#playerController = config.playerController ?? new PlayerController(room);
+			const apiCtrl = this.#apiHelperController = options.apiHelperController;
+			const rpcCtrl = this.#rpcController = options.rpcController ?? new RPCController(room);
+			const playerCtrl = this.#playerController = options.playerController ?? new PlayerController(room);
 			this.#source = {...code.source};
+			this.#configJson = JSON.stringify(options.config) ?? "undefined";
 			
 			rpcCtrl.addHandler(this.#rpcHandler);
 			
@@ -67,6 +70,7 @@ export class QuickJSController implements Disposable {
 	}
 	
 	#getSource(file: string): string | QuickJsProgramModuleSource | void {
+		if (file === "varhub:config") return `export default ${this.#configJson}`;
 		if (file === "varhub:events") return eventEmitterSource;
 		const possibleApiModuleName = this.#apiModuleHelper.getPossibleApiModuleName(file);
 		if (possibleApiModuleName != null) return this.#apiModuleHelper.createApiSource(possibleApiModuleName);
@@ -75,6 +79,7 @@ export class QuickJSController implements Disposable {
 	
 	[Symbol.dispose](){
 		this.#program?.dispose();
+		this.#rpcController.removeHandler(this.#rpcHandler)
 		this.#room?.[Symbol.dispose]();
 	}
 }

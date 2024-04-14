@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { EventEmitter } from "node:events";
 import { QuickJSController, QuickJSControllerCode } from "../QuickJSController.js";
-import { Room, ApiSource, ApiHelper, ApiHelperController, Connection } from "@flinbein/varhub";
+import { Room, ApiSource, ApiHelper, ApiHelperController, Connection, RPCController } from "@flinbein/varhub";
 
 import { getQuickJS } from "quickjs-emscripten"
 const quickJS = await getQuickJS();
@@ -13,7 +13,6 @@ class Counter implements ApiHelper {
 	#value = 0;
 	next = () => ++this.#value;
 	current = () => this.#value;
-	
 	error = () => { throw this.#value }
 	[Symbol.dispose](){}
 }
@@ -309,7 +308,7 @@ describe("test controller",() => {
 		const aliceClient = new Client(room, "Alice");
 		assert.equal(aliceClient.status, "disconnected", "alice can not join");
 	});
-	
+
 	it("room destroy", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -320,7 +319,7 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
@@ -330,7 +329,7 @@ describe("test controller",() => {
 		bobClient.call("destroy");
 		assert.equal(room.destroyed, true, "room destroyed");
 	});
-	
+
 	it("room player status, kick", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -343,7 +342,7 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
@@ -351,26 +350,26 @@ describe("test controller",() => {
 		const bobClient = new Client(room, "Bob");
 		assert.equal(bobClient.call("isPlayerOnline", "Alice"), undefined, "Alice online is undefined");
 		assert.equal(bobClient.call("hasPlayer", "Alice"), false, "no player Alice");
-		
+
 		const aliceClient = new Client(room, "Alice");
-		
+
 		assert.equal(bobClient.call("isPlayerOnline", "Alice"), true, "Alice online is true");
 		assert.equal(bobClient.call("hasPlayer", "Alice"), true, "has player Alice");
-		
+
 		aliceClient.leave();
-		
+
 		assert.equal(bobClient.call("isPlayerOnline", "Alice"), false, "Alice online is false after leave");
 		assert.equal(bobClient.call("hasPlayer", "Alice"), true, "has player Alice after leave");
-		
+
 		bobClient.call("kick", "Alice");
-		
+
 		assert.equal(bobClient.call("isPlayerOnline", "Alice"), undefined, "Alice online is undefined after kick");
 		assert.equal(bobClient.call("hasPlayer", "Alice"), false, "no player Alice after kick");
-		
+
 		bobClient.call("kick", "Bob");
 		assert.equal(bobClient.status, "disconnected", "Bob kick himself");
 	});
-	
+
 	it("room send, broadcast", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -382,7 +381,7 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
@@ -391,14 +390,14 @@ describe("test controller",() => {
 		const aliceClient = new Client(room, "Alice");
 		const aliceMessages: any[] = [];
 		aliceClient.on("message", value => aliceMessages.push(value));
-		
+
 		bobClient.call("send", "Alice", "message", "hello");
 		assert.deepEqual(aliceMessages, ["hello"], "alice receives first message");
-		
+
 		bobClient.call("broadcast", "message", "hi");
 		assert.deepEqual(aliceMessages, ["hello", "hi"], "alice receives next message");
 	});
-	
+
 	it("room player data", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -409,7 +408,7 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
@@ -418,7 +417,7 @@ describe("test controller",() => {
 		const bobData = bobClient.call("getPlayerData", "Bob");
 		assert.deepEqual(bobData, {foo: "bar"}, "Bob data is same");
 	});
-	
+
 	it("room on off", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -429,29 +428,29 @@ describe("test controller",() => {
 					let last = undefined;
 					const onJoin = (name) => last = name;
                     room.on("join", onJoin);
-                    
+
                     export const getLast = () => last;
                     export const stopListen = () => room.off("join", onJoin);
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		});
 		const bobClient = new Client(room, "Bob");
 		assert.equal(bobClient.call("getLast"), "Bob", "Bob is last");
-		
+
 		new Client(room, "Alice");
 		assert.equal(bobClient.call("getLast"), "Alice", "Alice is last");
-		
+
 		bobClient.call("stopListen");
 		new Client(room, "Eve");
 		assert.equal(bobClient.call("getLast"), "Alice", "Alice is still last");
 	});
-	
-	
+
+
 	it("room once", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -459,26 +458,102 @@ describe("test controller",() => {
 				"index.js": /* language=JavaScript */ `
                     import room from "varhub:room";
 
-					let last = undefined;
-					const onOffline = (name) => last = name;
+                    let last = undefined;
+                    const onOffline = (name) => last = name;
                     room.once("offline", onOffline);
-                    
+
                     export const getLast = () => last;
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		});
 		const bobClient = new Client(room, "Bob");
 		assert.equal(bobClient.call("getLast"), undefined, "no offline");
-		
+
 		new Client(room, "Alice").leave();
 		assert.equal(bobClient.call("getLast"), "Alice", "Alice disconnected first");
-		
+
 		new Client(room, "Eve").leave();
 		assert.equal(bobClient.call("getLast"), "Alice", "Alice still disconnected first");
+	});
+	
+	it("multi controllers with same api", {timeout: 500}, async () => {
+		const codeFoo: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+                    import counter from "varhub:api/Counter";
+                    export const foo = () => "Foo"
+
+                    export const fooCurrent = () => counter.current()
+				`
+			}
+		}
+		
+		const codeBar: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+                    import counter from "varhub:api/Counter";
+                    export const bar = () => "Bar"
+
+                    export const barNext = () => counter.next()
+				`
+			}
+		}
+		
+		const room = new Room();
+		const apiHelperController = new ApiHelperController(room, apiSource);
+		const rpcController = new RPCController(room);
+		new QuickJSController(room, quickJS, codeFoo, {apiHelperController, rpcController});
+		new QuickJSController(room, quickJS, codeBar, {apiHelperController, rpcController});
+		
+		const bobClient = new Client(room, "Bob");
+		assert.equal(bobClient.call("foo"), "Foo", "call runtime Foo");
+		assert.equal(bobClient.call("bar"), "Bar", "call runtime Bar");
+		
+		assert.equal(bobClient.call("fooCurrent"), 0, "current counter in Foo = 0");
+		bobClient.call("barNext"); // increment counter in Bar
+		assert.equal(bobClient.call("fooCurrent"), 1, "current counter in Foo = 1");
+	});
+	
+	it("config", {timeout: 500}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+                    import config from "varhub:config";
+                    export const getConfig = () => config
+				`
+			}
+		}
+		
+		const room = new Room();
+		new QuickJSController(room, quickJS, code, {config: {foo: "bar"}});
+		
+		const bobClient = new Client(room, "Bob");
+		assert.deepEqual(bobClient.call("getConfig"), {foo: "bar"}, "config is same");
+	});
+	
+	it("empty config", {timeout: 500}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+					import config from "varhub:config";
+                    export const getConfig = () => config
+				`
+			}
+		}
+		
+		const room = new Room();
+		new QuickJSController(room, quickJS, code);
+		
+		const bobClient = new Client(room, "Bob");
+		assert.deepEqual(bobClient.call("getConfig"), undefined, "config is empty");
 	});
 });
