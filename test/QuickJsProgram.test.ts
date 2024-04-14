@@ -1,6 +1,6 @@
 import { default as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { QuickJsProgram, QuickJsProgramSource } from "../QuickJsProgram.js"
+import { QuickJsProgram, QuickJsProgramSource } from "../src/QuickJsProgram.js"
 
 import { getQuickJS } from "quickjs-emscripten"
 const quickJS = await getQuickJS();

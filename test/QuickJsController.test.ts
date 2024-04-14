@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { EventEmitter } from "node:events";
-import { QuickJSController, QuickJSControllerCode } from "../QuickJSController.js";
+import { QuickJSController, QuickJSControllerCode } from "../src/QuickJSController.js";
 import { Room, ApiSource, ApiHelper, ApiHelperController, Connection, RPCController } from "@flinbein/varhub";
 
 import { getQuickJS } from "quickjs-emscripten"
