@@ -1,11 +1,15 @@
 import { QuickJSContext, QuickJSHandle, Scope, UsingDisposable } from "quickjs-emscripten"
+
+export interface ConsoleHandler {
+	(level: "log" | "error" | "warn" | "info" | "debug", ...args: unknown[]): void
+}
 export class ConsoleManager extends UsingDisposable {
 	#console: Console | null = console;
-	readonly #prefix: any;
+	readonly #handler: ConsoleHandler;
 	
-	constructor(...prefix: any[]) {
+	constructor(handler: ConsoleHandler) {
 		super();
-		this.#prefix = prefix;
+		this.#handler = handler;
 	}
 	
 	settleContext(context: QuickJSContext){
@@ -15,7 +19,7 @@ export class ConsoleManager extends UsingDisposable {
 			for (let consoleMethodName of consoleMethodNames) {
 				const methodHandle = scope.manage(context.newFunction(consoleMethodName, (...args: QuickJSHandle[]) => {
 					const nativeArgs = args.map(context.dump);
-					console[consoleMethodName](...this.#prefix, ...nativeArgs);
+					this.#handler(consoleMethodName, ...nativeArgs);
 				}));
 				context.setProp(consoleHandle, consoleMethodName, methodHandle)
 			}

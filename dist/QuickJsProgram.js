@@ -12,17 +12,15 @@ export class QuickJsProgram extends UsingDisposable {
     #intervalManager = new QuickJSIntervalManager(5000);
     #timeoutManager = new QuickJSTimeoutManager(5000);
     #immediateManager = new QuickJSImmediateManager(5000);
-    #consoleManager = new ConsoleManager("QuickJS:");
     #interruptManager = new InterruptManager(1000000n);
     #ownedDisposableItems = new Set([
-        this.#consoleManager,
         this.#timeoutManager,
         this.#intervalManager,
         this.#immediateManager,
     ]);
     #moduleMap = new Map;
     #builtinModules = new Set;
-    constructor(quickJS, getSource) {
+    constructor(quickJS, getSource, settings = {}) {
         super();
         this.#getSource = getSource;
         const context = this.#context = quickJS.newContext();
@@ -30,7 +28,11 @@ export class QuickJsProgram extends UsingDisposable {
         this.#intervalManager.settleContext(context);
         this.#timeoutManager.settleContext(context);
         this.#immediateManager.settleContext(context);
-        this.#consoleManager.settleContext(context);
+        if (settings.consoleHandler) {
+            const consoleManager = new ConsoleManager(settings.consoleHandler);
+            this.#ownedDisposableItems.add(consoleManager);
+            consoleManager.settleContext(context);
+        }
         this.#ownedDisposableItems.add(context);
         const runtime = context.runtime;
         runtime.setInterruptHandler(this.#interruptManager.onInterrupt);

@@ -1,6 +1,7 @@
 import type { QuickJSWASMModule } from "quickjs-emscripten";
+import type { ConsoleHandler } from "./scope/ConsoleManager.js";
 import type { QuickJsProgramModule } from "./QuickJsProgramModule.js";
-import { PlayerController, RPCController, type Room, type Connection, ApiHelperController } from "@flinbein/varhub";
+import { PlayerController, RPCController, type Room, type Connection, ApiHelperController, TypedEventEmitter } from "@flinbein/varhub";
 import { QuickJsProgram, QuickJsProgramModuleSource } from "./QuickJsProgram.js";
 import { RoomModuleHelper } from "./RoomModuleHelper.js";
 import { ApiModuleHelper } from "./ApiModuleHelper.js";
@@ -19,7 +20,11 @@ export interface ControllerOptions {
 	config?: {};
 }
 
-export class QuickJSController implements Disposable {
+export type QuickJSControllerEvents = {
+	console: Parameters<ConsoleHandler>;
+}
+
+export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents> implements Disposable  {
 	readonly #room: Room;
 	readonly #apiHelperController: ApiHelperController | undefined;
 	readonly #rpcController: RPCController;
@@ -31,6 +36,7 @@ export class QuickJSController implements Disposable {
 	readonly #configJson: string;
 	
 	constructor(room: Room, quickJS: QuickJSWASMModule, code: QuickJSControllerCode, options: ControllerOptions = {}) {
+		super();
 		try {
 			this.#room = room;
 			room.on("destroy", this[Symbol.dispose].bind(this));
@@ -42,7 +48,9 @@ export class QuickJSController implements Disposable {
 			
 			rpcCtrl.addHandler(this.#rpcHandler);
 			
-			const program = this.#program = new QuickJsProgram(quickJS, this.#getSource.bind(this));
+			const program = this.#program = new QuickJsProgram(quickJS, this.#getSource.bind(this), {
+				consoleHandler: this.#consoleHandler
+			});
 			new RoomModuleHelper(room, playerCtrl, program, "varhub:room");
 			
 			this.#apiModuleHelper = new ApiModuleHelper(apiCtrl, program, "varhub:api/");
@@ -52,6 +60,10 @@ export class QuickJSController implements Disposable {
 			this[Symbol.dispose]();
 			throw error;
 		}
+	}
+	
+	#consoleHandler: ConsoleHandler = (level, ...args: any[]) => {
+		this.emit("console", level, ...args);
 	}
 	
 	get room(){

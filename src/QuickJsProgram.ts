@@ -2,9 +2,10 @@ import { QuickJSContext, type QuickJSHandle, type QuickJSWASMModule, Scope, Usin
 import url from 'node:url';
 import { QuickJSImmediateManager, QuickJSIntervalManager, QuickJSTimeoutManager } from "./scope/TimeManagers.js"
 import { ShortLifeContextWrapper } from "./utils/wrapper.js"
-import { ConsoleManager } from "./scope/ConsoleManager.js";
+import { ConsoleHandler, ConsoleManager } from "./scope/ConsoleManager.js";
 import { InterruptManager } from "./InterruptManager.js";
 import { QuickJsProgramModule } from "./QuickJsProgramModule.js";
+import { EventEmitter } from "node:events";
 
 export interface QuickJsProgramModuleSource {
 	source: string,
@@ -15,6 +16,10 @@ export interface QuickJsProgramSource {
 	(file: string, program: QuickJsProgram): string | void | QuickJsProgramModuleSource
 }
 
+export interface QuickJsProgramSettings {
+	consoleHandler?: ConsoleHandler
+}
+
 export class QuickJsProgram extends UsingDisposable {
 	#alive = true;
 	readonly #getSource: QuickJsProgramSource
@@ -23,10 +28,8 @@ export class QuickJsProgram extends UsingDisposable {
 	readonly #intervalManager = new QuickJSIntervalManager(5000);
 	readonly #timeoutManager = new QuickJSTimeoutManager(5000);
 	readonly #immediateManager = new QuickJSImmediateManager(5000);
-	readonly #consoleManager = new ConsoleManager("QuickJS:");
 	readonly #interruptManager = new InterruptManager(1_000_000n);
 	readonly #ownedDisposableItems = new Set<UsingDisposable>([
-		this.#consoleManager,
 		this.#timeoutManager,
 		this.#intervalManager,
 		this.#immediateManager,
@@ -34,7 +37,7 @@ export class QuickJsProgram extends UsingDisposable {
 	readonly #moduleMap = new Map<string, QuickJsProgramModule>;
 	readonly #builtinModules = new Set<string>;
 	
-	constructor(quickJS: QuickJSWASMModule, getSource: QuickJsProgramSource) {
+	constructor(quickJS: QuickJSWASMModule, getSource: QuickJsProgramSource, settings: QuickJsProgramSettings ={}) {
 		super();
 		this.#getSource = getSource;
 		const context = this.#context = quickJS.newContext();
@@ -43,7 +46,11 @@ export class QuickJsProgram extends UsingDisposable {
 		this.#intervalManager.settleContext(context);
 		this.#timeoutManager.settleContext(context);
 		this.#immediateManager.settleContext(context);
-		this.#consoleManager.settleContext(context);
+		if (settings.consoleHandler) {
+			const consoleManager = new ConsoleManager(settings.consoleHandler);
+			this.#ownedDisposableItems.add(consoleManager);
+			consoleManager.settleContext(context);
+		}
 		
 		this.#ownedDisposableItems.add(context);
 		

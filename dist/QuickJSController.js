@@ -1,9 +1,9 @@
-import { PlayerController, RPCController } from "@flinbein/varhub";
+import { PlayerController, RPCController, TypedEventEmitter } from "@flinbein/varhub";
 import { QuickJsProgram } from "./QuickJsProgram.js";
 import { RoomModuleHelper } from "./RoomModuleHelper.js";
 import { ApiModuleHelper } from "./ApiModuleHelper.js";
 import eventEmitterSource from "./EventEmitterSource.js";
-export class QuickJSController {
+export class QuickJSController extends TypedEventEmitter {
     #room;
     #apiHelperController;
     #rpcController;
@@ -14,6 +14,7 @@ export class QuickJSController {
     #source;
     #configJson;
     constructor(room, quickJS, code, options = {}) {
+        super();
         try {
             this.#room = room;
             room.on("destroy", this[Symbol.dispose].bind(this));
@@ -23,7 +24,9 @@ export class QuickJSController {
             this.#source = { ...code.source };
             this.#configJson = JSON.stringify(options.config) ?? "undefined";
             rpcCtrl.addHandler(this.#rpcHandler);
-            const program = this.#program = new QuickJsProgram(quickJS, this.#getSource.bind(this));
+            const program = this.#program = new QuickJsProgram(quickJS, this.#getSource.bind(this), {
+                consoleHandler: this.#consoleHandler
+            });
             new RoomModuleHelper(room, playerCtrl, program, "varhub:room");
             this.#apiModuleHelper = new ApiModuleHelper(apiCtrl, program, "varhub:api/");
             this.#main = this.#program.getModule(code.main);
@@ -33,6 +36,9 @@ export class QuickJSController {
             throw error;
         }
     }
+    #consoleHandler = (level, ...args) => {
+        this.emit("console", level, ...args);
+    };
     get room() {
         return this.#room;
     }

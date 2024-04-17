@@ -1,10 +1,10 @@
 import { Scope, UsingDisposable } from "quickjs-emscripten";
 export class ConsoleManager extends UsingDisposable {
     #console = console;
-    #prefix;
-    constructor(...prefix) {
+    #handler;
+    constructor(handler) {
         super();
-        this.#prefix = prefix;
+        this.#handler = handler;
     }
     settleContext(context) {
         Scope.withScope((scope) => {
@@ -13,7 +13,7 @@ export class ConsoleManager extends UsingDisposable {
             for (let consoleMethodName of consoleMethodNames) {
                 const methodHandle = scope.manage(context.newFunction(consoleMethodName, (...args) => {
                     const nativeArgs = args.map(context.dump);
-                    console[consoleMethodName](...this.#prefix, ...nativeArgs);
+                    this.#handler(consoleMethodName, ...nativeArgs);
                 }));
                 context.setProp(consoleHandle, consoleMethodName, methodHandle);
             }

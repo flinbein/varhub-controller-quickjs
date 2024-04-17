@@ -544,7 +544,7 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-					import config from "varhub:config";
+                    import config from "varhub:config";
                     export const getConfig = () => config
 				`
 			}
@@ -555,5 +555,30 @@ describe("test controller",() => {
 		
 		const bobClient = new Client(room, "Bob");
 		assert.deepEqual(bobClient.call("getConfig"), undefined, "config is empty");
+	});
+	
+	it("logger", {timeout: 500}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+                    export const doConsole = (level, ...args) => console[level](...args);
+				`
+			}
+		}
+		
+		const room = new Room();
+		const ctrl = new QuickJSController(room, quickJS, code);
+		const consoleEvents: unknown[] = [];
+		ctrl.on("console", (...data) => consoleEvents.push(data));
+		
+		const bobClient = new Client(room, "Bob");
+		assert.deepEqual(consoleEvents, [], "no events");
+		bobClient.call("doConsole", "log", 1, 2, 3);
+		assert.deepEqual(consoleEvents, [["log", 1, 2, 3]], "1 console event");
+		bobClient.call("doConsole", "error", "x");
+		assert.deepEqual(consoleEvents, [["log", 1, 2, 3], ["error", "x"]], "2 console event");
+		bobClient.call("doConsole", "info");
+		assert.deepEqual(consoleEvents, [["log", 1, 2, 3], ["error", "x"], ["info"]], "3 console event");
 	});
 });
