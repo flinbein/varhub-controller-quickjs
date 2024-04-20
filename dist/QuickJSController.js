@@ -10,7 +10,8 @@ export class QuickJSController extends TypedEventEmitter {
     #apiModuleHelper;
     #playerController;
     #program;
-    #main;
+    #mainModule = undefined;
+    #mainModuleName;
     #source;
     #configJson;
     constructor(room, quickJS, code, options = {}) {
@@ -18,23 +19,29 @@ export class QuickJSController extends TypedEventEmitter {
         try {
             this.#room = room;
             room.on("destroy", this[Symbol.dispose].bind(this));
-            const apiCtrl = this.#apiHelperController = options.apiHelperController;
-            const rpcCtrl = this.#rpcController = options.rpcController ?? new RPCController(room);
-            const playerCtrl = this.#playerController = options.playerController ?? new PlayerController(room);
+            this.#apiHelperController = options.apiHelperController;
+            this.#rpcController = options.rpcController ?? new RPCController(room);
+            this.#playerController = options.playerController ?? new PlayerController(room);
             this.#source = { ...code.source };
             this.#configJson = JSON.stringify(options.config) ?? "undefined";
-            rpcCtrl.addHandler(this.#rpcHandler);
-            const program = this.#program = new QuickJsProgram(quickJS, this.#getSource.bind(this), {
+            this.#program = new QuickJsProgram(quickJS, this.#getSource.bind(this), {
                 consoleHandler: this.#consoleHandler
             });
-            new RoomModuleHelper(room, playerCtrl, program, "varhub:room");
-            this.#apiModuleHelper = new ApiModuleHelper(apiCtrl, program, "varhub:api/");
-            this.#main = this.#program.getModule(code.main);
+            this.#mainModuleName = code.main;
         }
         catch (error) {
             this[Symbol.dispose]();
             throw error;
         }
+    }
+    start() {
+        if (this.#mainModule)
+            return this;
+        new RoomModuleHelper(this.#room, this.#playerController, this.#program, "varhub:room");
+        this.#apiModuleHelper = new ApiModuleHelper(this.#apiHelperController, this.#program, "varhub:api/");
+        this.#rpcController.addHandler(this.#rpcHandler);
+        this.#mainModule = this.#program.getModule(this.#mainModuleName);
+        return this;
     }
     #consoleHandler = (level, ...args) => {
         this.emit("console", level, ...args);
@@ -45,14 +52,14 @@ export class QuickJSController extends TypedEventEmitter {
     #rpcHandler = (connection, methodName, ...args) => {
         if (typeof methodName !== "string")
             return;
-        const type = this.#main.getType(methodName);
+        const type = this.#mainModule?.getType(methodName);
         if (type === "function")
             return () => {
                 const player = this.#playerController.getPlayerOfConnection(connection);
                 const playerId = player ? this.#playerController.getPlayerId(player) : null;
                 if (playerId == null)
                     throw new Error(`no player`);
-                return this.#main.call(methodName, { player: playerId }, ...args);
+                return this.#mainModule?.call(methodName, { player: playerId }, ...args);
             };
     };
     #getSource(file) {
@@ -60,9 +67,9 @@ export class QuickJSController extends TypedEventEmitter {
             return `export default ${this.#configJson}`;
         if (file === "varhub:events")
             return eventEmitterSource;
-        const possibleApiModuleName = this.#apiModuleHelper.getPossibleApiModuleName(file);
+        const possibleApiModuleName = this.#apiModuleHelper?.getPossibleApiModuleName(file);
         if (possibleApiModuleName != null)
-            return this.#apiModuleHelper.createApiSource(possibleApiModuleName);
+            return this.#apiModuleHelper?.createApiSource(possibleApiModuleName);
         return this.#source[file];
     }
     [Symbol.dispose]() {
