@@ -23,7 +23,7 @@ export class RoomModuleHelper {
         program.createModule(moduleName, roomSource, true);
         for (const eventName of ["join", "leave", "online", "offline"]) {
             playerController.on(eventName, (player) => {
-                innerModule.call("emit", undefined, eventName, playerController.getPlayerId(player));
+                innerModule.call("emit", undefined, eventName, player.id);
             });
         }
     }

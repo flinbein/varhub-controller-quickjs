@@ -28,7 +28,7 @@ export class RoomModuleHelper {
 		
 		for (const eventName of ["join", "leave", "online", "offline"] as const) {
 			playerController.on(eventName, (player) => {
-				innerModule.call("emit", undefined, eventName, playerController.getPlayerId(player))
+				innerModule.call("emit", undefined, eventName, player.id);
 			});
 		}
 	}
