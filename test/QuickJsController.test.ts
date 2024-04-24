@@ -36,21 +36,36 @@ class Client {
 	readonly #id: string;
 	readonly #password: string | undefined;
 	readonly #config: unknown;
+	readonly #eventLog: unknown[] = [];
 	#nextRpcId = 0;
 	#rpcResultEmitter = new EventEmitter();
 	#rpcEventEmitter = new EventEmitter();
+	#closeReason: string | null | undefined = undefined;
 	constructor(room: Room, id: string, password?: string|undefined, config?: unknown) {
 		this.#id = id;
 		this.#password = password;
 		this.#config = config;
 		const connection = this.#connection = room.createConnection(id, password, config);
-		connection.on("event", (eventName, eventId, ...args) => {
+		connection.on("disconnect", (ignored, reason) => {
+			this.#closeReason = reason;
+		})
+		connection.on("event", (eventName, ...eventArgs) => {
+			const [eventId, ...args] = eventArgs;
 			if (eventName === "$rpcResult") {
 				this.#rpcResultEmitter.emit(eventId, ...args);
 			} else if (eventName === "$rpcEvent") {
+				this.#eventLog.push(eventArgs);
 				this.#rpcEventEmitter.emit(eventId, ...args);
 			}
 		});
+	}
+	
+	get eventLog(){
+		return this.#eventLog;
+	}
+	
+	get closeReason(){
+		return this.#closeReason;
 	}
 	
 	get config(){
@@ -570,8 +585,8 @@ describe("test controller",() => {
 		const room = new Room();
 		const consoleEvents: unknown[] = [];
 		new QuickJSController(room, quickJS, code)
-			.on("console", (...data) => consoleEvents.push(data))
-			.start()
+		.on("console", (...data) => consoleEvents.push(data))
+		.start()
 		;
 		
 		const bobClient = new Client(room, "Bob");
@@ -583,4 +598,95 @@ describe("test controller",() => {
 		bobClient.call("doConsole", "info");
 		assert.deepEqual(consoleEvents, [["log", 1, 2, 3], ["error", "x"], ["info"]], "3 console event");
 	});
+	
+	it("kick other connections", {timeout: 500}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+					import room from "varhub:room";
+                    export function kickOther(){
+    					const {player, connection} = this;
+                        const connections = room.getPlayerConnections(player);
+                        for (const c of connections){
+                            if (c === connection) continue;
+                            room.kick(c);
+						}
+					}
+				`
+			}
+		}
+		
+		const room = new Room();
+		new QuickJSController(room, quickJS, code).start();
+		
+		const bobClient1 = new Client(room, "Bob");
+		const bobClient2 = new Client(room, "Bob");
+		const bobClient3 = new Client(room, "Bob");
+		assert.equal(bobClient1.status, "joined");
+		assert.equal(bobClient2.status, "joined");
+		assert.equal(bobClient3.status, "joined");
+		bobClient1.call("kickOther");
+		assert.equal(bobClient1.status, "joined");
+		assert.equal(bobClient2.status, "disconnected");
+		assert.equal(bobClient3.status, "disconnected");
+	});
+	
+	it("send other connections", {timeout: 500}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+					import room from "varhub:room";
+                    export function sendOther(){
+    					const {player, connection} = this;
+                        const connections = room.getPlayerConnections(player);
+                        for (const c of connections){
+                            if (c === connection) continue;
+                            room.send(c, "msg");
+						}
+					}
+				`
+			}
+		}
+		
+		const room = new Room();
+		new QuickJSController(room, quickJS, code).start();
+		
+		const bobClient1 = new Client(room, "Bob");
+		const bobClient2 = new Client(room, "Bob");
+		assert.deepEqual(bobClient1.eventLog, []);
+		assert.deepEqual(bobClient2.eventLog, []);
+		bobClient1.call("sendOther");
+		assert.deepEqual(bobClient1.eventLog, []);
+		assert.deepEqual(bobClient2.eventLog, [["msg"]]);
+	});
+	
+	it("kick other on join", {timeout: 500}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+					import room from "varhub:room";
+					room.on("connectionJoin", (player, connection) => {
+                        const connections = room.getPlayerConnections(player);
+                        for (const c of connections){
+                            if (c === connection) continue;
+                            room.kick(c, "only 1 connection allowed");
+                        }
+					});
+				`
+			}
+		}
+		
+		const room = new Room();
+		new QuickJSController(room, quickJS, code).start();
+		
+		const bobClient1 = new Client(room, "Bob");
+		assert.deepEqual(bobClient1.status, "joined");
+		const bobClient2 = new Client(room, "Bob");
+		assert.deepEqual(bobClient2.status, "joined");
+		assert.deepEqual(bobClient1.status, "disconnected");
+		assert.deepEqual(bobClient1.closeReason, "only 1 connection allowed");
+	})
 });

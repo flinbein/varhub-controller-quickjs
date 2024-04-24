@@ -5,7 +5,6 @@ import { ShortLifeContextWrapper } from "./utils/wrapper.js"
 import { ConsoleHandler, ConsoleManager } from "./scope/ConsoleManager.js";
 import { InterruptManager } from "./InterruptManager.js";
 import { QuickJsProgramModule } from "./QuickJsProgramModule.js";
-import { EventEmitter } from "node:events";
 
 export interface QuickJsProgramModuleSource {
 	source: string,

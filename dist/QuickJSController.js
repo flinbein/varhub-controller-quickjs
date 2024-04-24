@@ -59,7 +59,7 @@ export class QuickJSController extends TypedEventEmitter {
                 const playerId = player ? this.#playerController.getPlayerId(player) : null;
                 if (playerId == null)
                     throw new Error(`no player`);
-                return this.#mainModule?.call(methodName, { player: playerId }, ...args);
+                return this.#mainModule?.call(methodName, { player: playerId, connection: connection.id }, ...args);
             };
     };
     #getSource(file) {
