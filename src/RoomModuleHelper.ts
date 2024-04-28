@@ -36,7 +36,7 @@ export class RoomModuleHelper {
 		
 		room.prependListener("connectionJoin", (connection) => {
 			const player = playerController.getPlayerOfConnection(connection);
-			innerModule.call("emit", undefined, "connectionJoin", player?.id, connection.id,);
+			innerModule.call("emit", undefined, "connectionJoin", player?.id, connection.id);
 		});
 		
 		room.prependListener("connectionClosed", (connection, online, reason) => {

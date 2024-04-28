@@ -688,5 +688,30 @@ describe("test controller",() => {
 		assert.deepEqual(bobClient2.status, "joined");
 		assert.deepEqual(bobClient1.status, "disconnected");
 		assert.deepEqual(bobClient1.closeReason, "only 1 connection allowed");
-	})
+	});
+	
+	it("performance now()", {timeout: 500}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+                    export function testPerformance(){
+    					console.log("TEST-ER", performance.now);
+                        const a = performance.now();
+                        for (let i = 0; i < 10000; i++) {}
+                        const b = performance.now();
+                        return [a,b];
+					}
+				`
+			}
+		}
+		
+		const room = new Room();
+		new QuickJSController(room, quickJS, code).start();
+		const bobClient1 = new Client(room, "Bob");
+		const [a,b] = bobClient1.call("testPerformance") as [number, number];
+		assert.equal(typeof a, "number", "performance a is number");
+		assert.equal(typeof b, "number", "performance a is number");
+		assert.ok(b > a, "performance checked");
+	});
 });
