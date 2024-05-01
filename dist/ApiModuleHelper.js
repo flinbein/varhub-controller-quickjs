@@ -18,7 +18,7 @@ export class ApiModuleHelper {
         if (file.startsWith(this.#apiPrefix))
             return file.substring(this.#apiPrefix.length);
     }
-    createApiSource(apiName) {
+    createApiSource(apiName, program) {
         const api = this.#apiHelperController?.getOrCreateApi(apiName);
         if (!api)
             return;
@@ -33,10 +33,8 @@ export class ApiModuleHelper {
         `[${JSON.stringify(methodName)}]: createMethod(${JSON.stringify(methodName)})`)).join(",")}
 			})
 		`;
-        return {
-            source: innerModuleCode,
-            builtin: true,
-        };
+        program.setBuiltinModuleName(this.#apiPrefix + apiName, true);
+        return innerModuleCode;
     }
     callApi = (apiName, method, ...args) => {
         const api = this.#apiHelperController?.getApi(String(apiName));

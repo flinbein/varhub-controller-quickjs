@@ -4,6 +4,7 @@ import { RoomModuleHelper } from "./RoomModuleHelper.js";
 import { ApiModuleHelper } from "./ApiModuleHelper.js";
 import eventEmitterSource from "./EventEmitterSource.js";
 export class QuickJSController extends TypedEventEmitter {
+    #quickJS;
     #room;
     #apiHelperController;
     #rpcController;
@@ -18,6 +19,7 @@ export class QuickJSController extends TypedEventEmitter {
         super();
         try {
             this.#room = room;
+            this.#quickJS = quickJS;
             room.on("destroy", this[Symbol.dispose].bind(this));
             this.#apiHelperController = options.apiHelperController;
             this.#rpcController = options.rpcController ?? new RPCController(room);
@@ -34,14 +36,25 @@ export class QuickJSController extends TypedEventEmitter {
             throw error;
         }
     }
+    #started = false;
     start() {
-        if (this.#mainModule)
-            return this;
+        if (this.#started)
+            throw new Error("already starting");
+        this.#started = true;
         new RoomModuleHelper(this.#room, this.#playerController, this.#program, "varhub:room");
         this.#apiModuleHelper = new ApiModuleHelper(this.#apiHelperController, this.#program, "varhub:api/");
         this.#rpcController.addHandler(this.#rpcHandler);
-        this.#mainModule = this.#program.getModule(this.#mainModuleName);
+        this.#mainModule = this.#program.createModule(this.#mainModuleName, this.#source[this.#mainModuleName]);
         return this;
+    }
+    async startAsync() {
+        if (this.#started)
+            throw new Error("already starting");
+        this.#started = true;
+        new RoomModuleHelper(this.#room, this.#playerController, this.#program, "varhub:room");
+        this.#apiModuleHelper = new ApiModuleHelper(this.#apiHelperController, this.#program, "varhub:api/");
+        this.#rpcController.addHandler(this.#rpcHandler);
+        this.#mainModule = await this.#program.createModuleAsync(this.#mainModuleName, this.#source[this.#mainModuleName]);
     }
     #consoleHandler = (level, ...args) => {
         this.emit("console", level, ...args);
@@ -62,15 +75,35 @@ export class QuickJSController extends TypedEventEmitter {
                 return this.#mainModule?.call(methodName, { player: playerId, connection: connection.id }, ...args);
             };
     };
-    #getSource(file) {
+    #getSource(file, program) {
         if (file === "varhub:config")
             return `export default ${this.#configJson}`;
         if (file === "varhub:events")
             return eventEmitterSource;
         const possibleApiModuleName = this.#apiModuleHelper?.getPossibleApiModuleName(file);
         if (possibleApiModuleName != null)
-            return this.#apiModuleHelper?.createApiSource(possibleApiModuleName);
-        return this.#source[file];
+            return this.#apiModuleHelper?.createApiSource(possibleApiModuleName, program);
+        if (file in this.#source)
+            return this.#source[file];
+        // todo: load async https
+        if ("evalCodeAsync" in this.#quickJS) {
+            const url = this.#tryGetUrl(file);
+            if (url)
+                return this.#fetchSource(url);
+        }
+        return undefined;
+    }
+    #tryGetUrl(descriptor) {
+        try {
+            return new URL(descriptor);
+        }
+        catch {
+            return undefined;
+        }
+    }
+    async #fetchSource(url) {
+        const response = await fetch(url);
+        return await response.text();
     }
     [Symbol.dispose]() {
         this.#program?.dispose();

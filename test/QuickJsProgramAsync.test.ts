@@ -2,11 +2,11 @@ import { default as assert } from "node:assert";
 import { describe, it } from "node:test";
 import { QuickJsProgram, QuickJsProgramSource } from "../src/QuickJsProgram.js"
 
-import { getQuickJS } from "quickjs-emscripten"
-const quickJS = await getQuickJS();
+import { newQuickJSAsyncWASMModule } from "quickjs-emscripten"
+const quickJS = await newQuickJSAsyncWASMModule();
 
 function sources(sourceMap: Record<string, string>): QuickJsProgramSource {
-	return (file: string) => sourceMap[file];
+	return (file: string) => new Promise(r => setTimeout(r, 10, sourceMap[file]));
 }
 
 function sourcesWithApi(
@@ -29,10 +29,12 @@ function sourcesWithApi(
 	}
 }
 
-describe("test program",() => {
+describe("test async program",() => {
 	it("simple methods", async () => {
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
+				await new Promise(r => setTimeout(r, 10));
+
 				export function increment(x){
 					return x+1;
 				}
@@ -57,7 +59,7 @@ describe("test program",() => {
 		})
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 
 		const result1 = indexModule.call("increment", undefined, 10);
 		assert.equal(result1, 11);
@@ -90,7 +92,7 @@ describe("test program",() => {
 		}
 	});
 
-	it("simple getProp", () => {
+	it("simple getProp", async () => {
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
 				export let value = 1;
@@ -101,7 +103,7 @@ describe("test program",() => {
 		});
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 		assert.equal(indexModule.getProp("value"), 1, "base value is 1");
 
 		indexModule.call("setValue", undefined, 2);
@@ -119,7 +121,7 @@ describe("test program",() => {
 		})
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 		const result = indexModule.withModule(module => ({
 			aIsA: indexModule.call("isA", undefined, module.getProp("a")),
 			bIsA: indexModule.call("isA", undefined, module.getProp("b"))
@@ -140,7 +142,7 @@ describe("test program",() => {
 		})
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 
 		const result = indexModule.withModule((wrapper) => {
 			const aHandle = wrapper.callMethod("getA");
@@ -167,7 +169,7 @@ describe("test program",() => {
 		})
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 		const result = indexModule.withModule((wrapper) => {
 			try {
 				wrapper.callMethod("throwA");
@@ -189,7 +191,7 @@ describe("test program",() => {
 		assert.equal(result2, false, "b is a");
 	});
 
-	it("simple modules", () => {
+	it("simple modules", async () => {
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
 				export * from "inner/methods.js";
@@ -207,17 +209,17 @@ describe("test program",() => {
 		})
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 
 		const result = indexModule.call("add", undefined, 1, 2);
 		assert.equal(result, 3, "call add success");
 		assert.equal(indexModule.getProp("secret"), 100, "secret");
 
-		const secretModule = program.createModule("secret.js");
+		const secretModule = await program.createModuleAsync("secret.js");
 		assert.equal(secretModule.getProp("innerSecret"), 100, "inner secret");
 	});
 
-	it("simple json", () => {
+	it("simple json", async () => {
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
 				import data from "inner/data.json";
@@ -227,11 +229,11 @@ describe("test program",() => {
 		})
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 		assert.equal(indexModule.getProp("foo"), "bar", "json imported");
 	})
 
-	it("simple text", () => {
+	it("simple text", async () => {
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
 				import data from "inner/data.txt";
@@ -241,11 +243,11 @@ describe("test program",() => {
 		});
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 		assert.equal(indexModule.getProp("text"), "Hello world", "txt imported");
 	});
 
-	it("simple inner module", () => {
+	it("simple inner module", async () => {
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `export * from "#inner";`,
 			"index.js#inner": /* language=JavaScript */ `export const name = "index-inner";`,
@@ -254,10 +256,10 @@ describe("test program",() => {
 		});
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 		assert.equal(indexModule.getProp("name"), "index-inner");
 
-		assert.throws(() => program.createModule("evil.js"));
+		assert.rejects(program.createModuleAsync("evil.js"));
 	})
 
 	it("immediate", async () => {
@@ -274,7 +276,7 @@ describe("test program",() => {
 		});
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 		const result = await indexModule.call("test")
 		assert.equal(result, 1, "txt imported");
 	})
@@ -288,7 +290,7 @@ describe("test program",() => {
 		});
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 		indexModule.call("cycle", null, 1, "no deadlock in 1");
 		indexModule.call("cycle", null, 100, "no deadlock in 100");
 		indexModule.call("cycle", null, 10000, "no deadlock in 10000");
@@ -326,7 +328,7 @@ describe("test program",() => {
 		});
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 		await assert.rejects(async () => {
 			await indexModule.call("asyncCycle", undefined);
 		}, (error: any) => error.message === 'interrupted', "should reject deadlock");
@@ -335,7 +337,7 @@ describe("test program",() => {
 			await indexModule.call("asyncDeadlock");
 		}, "must dead on asyncDeadlock");
 
-	})
+	});
 
 	it("simple api", async () => {
 
@@ -369,7 +371,7 @@ describe("test program",() => {
 		})
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
-		const indexModule = program.createModule("index.js");
+		const indexModule = await program.createModuleAsync("index.js");
 		assert.equal(indexModule.getProp("notExist"), null);
 
 		assert.deepEqual(indexModule.call("testRepeat"), ["repeat", 1, 2, 3]);
@@ -394,4 +396,6 @@ describe("test program",() => {
 			assert.deepEqual(error, ["repeatAsyncThrow", 1, 2, 3])
 		}
 	});
+	
+	
 })

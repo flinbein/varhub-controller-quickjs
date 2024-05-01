@@ -1,5 +1,5 @@
 import type { ApiHelperController, PlayerController, Room } from "@flinbein/varhub";
-import { QuickJsProgram, QuickJsProgramModuleSource } from "./QuickJsProgram.js";
+import { QuickJsProgram } from "./QuickJsProgram.js";
 import { QuickJsProgramModule } from "./QuickJsProgramModule.js";
 
 const EVENT_EMITTER_MODULE_NAME = "@varhub/EventEmitter";
@@ -28,7 +28,7 @@ export class ApiModuleHelper {
 		if (file.startsWith(this.#apiPrefix)) return file.substring(this.#apiPrefix.length);
 	}
 	
-	createApiSource(apiName: string): QuickJsProgramModuleSource | void {
+	createApiSource(apiName: string, program: QuickJsProgram): string | void {
 		const api = this.#apiHelperController?.getOrCreateApi(apiName);
 		if (!api) return;
 		const methods = Object.getOwnPropertyNames(api);
@@ -44,10 +44,8 @@ export class ApiModuleHelper {
 				)).join(",")}
 			})
 		`
-		return {
-			source: innerModuleCode,
-			builtin: true,
-		}
+		program.setBuiltinModuleName(this.#apiPrefix + apiName, true);
+		return innerModuleCode;
 	}
 	
 	callApi = (apiName: unknown, method: unknown, ...args: unknown[]) => {

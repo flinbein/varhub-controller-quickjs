@@ -4,8 +4,9 @@ import { EventEmitter } from "node:events";
 import { QuickJSController, QuickJSControllerCode } from "../src/QuickJSController.js";
 import { Room, ApiSource, ApiHelper, ApiHelperController, Connection, RPCController } from "@flinbein/varhub";
 
-import { getQuickJS } from "quickjs-emscripten"
+import { getQuickJS, newQuickJSAsyncWASMModule } from "quickjs-emscripten"
 const quickJS = await getQuickJS();
+const quickJSAsync = await newQuickJSAsyncWASMModule();
 
 
 
@@ -495,7 +496,7 @@ describe("test controller",() => {
 		new Client(room, "Eve").leave();
 		assert.equal(bobClient.call("getLast"), "Alice", "Alice still disconnected first");
 	});
-	
+
 	it("multi controllers with same api", {timeout: 500}, async () => {
 		const codeFoo: QuickJSControllerCode = {
 			main: "index.js",
@@ -508,7 +509,7 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const codeBar: QuickJSControllerCode = {
 			main: "index.js",
 			source: {
@@ -520,22 +521,22 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		const apiHelperController = new ApiHelperController(room, apiSource);
 		const rpcController = new RPCController(room);
 		new QuickJSController(room, quickJS, codeFoo, {apiHelperController, rpcController}).start();
 		new QuickJSController(room, quickJS, codeBar, {apiHelperController, rpcController}).start();
-		
+
 		const bobClient = new Client(room, "Bob");
 		assert.equal(bobClient.call("foo"), "Foo", "call runtime Foo");
 		assert.equal(bobClient.call("bar"), "Bar", "call runtime Bar");
-		
+
 		assert.equal(bobClient.call("fooCurrent"), 0, "current counter in Foo = 0");
 		bobClient.call("barNext"); // increment counter in Bar
 		assert.equal(bobClient.call("fooCurrent"), 1, "current counter in Foo = 1");
 	});
-	
+
 	it("config", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -546,14 +547,14 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code, {config: {foo: "bar"}}).start();
-		
+
 		const bobClient = new Client(room, "Bob");
 		assert.deepEqual(bobClient.call("getConfig"), {foo: "bar"}, "config is same");
 	});
-	
+
 	it("empty config", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -564,14 +565,14 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code).start();
-		
+
 		const bobClient = new Client(room, "Bob");
 		assert.deepEqual(bobClient.call("getConfig"), undefined, "config is empty");
 	});
-	
+
 	it("logger", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -581,14 +582,14 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		const consoleEvents: unknown[] = [];
 		new QuickJSController(room, quickJS, code)
 		.on("console", (...data) => consoleEvents.push(data))
 		.start()
 		;
-		
+
 		const bobClient = new Client(room, "Bob");
 		assert.deepEqual(consoleEvents, [], "no events");
 		bobClient.call("doConsole", "log", 1, 2, 3);
@@ -598,7 +599,7 @@ describe("test controller",() => {
 		bobClient.call("doConsole", "info");
 		assert.deepEqual(consoleEvents, [["log", 1, 2, 3], ["error", "x"], ["info"]], "3 console event");
 	});
-	
+
 	it("kick other connections", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -616,10 +617,10 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code).start();
-		
+
 		const bobClient1 = new Client(room, "Bob");
 		const bobClient2 = new Client(room, "Bob");
 		const bobClient3 = new Client(room, "Bob");
@@ -631,7 +632,7 @@ describe("test controller",() => {
 		assert.equal(bobClient2.status, "disconnected");
 		assert.equal(bobClient3.status, "disconnected");
 	});
-	
+
 	it("send other connections", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -649,10 +650,10 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code).start();
-		
+
 		const bobClient1 = new Client(room, "Bob");
 		const bobClient2 = new Client(room, "Bob");
 		assert.deepEqual(bobClient1.eventLog, []);
@@ -661,7 +662,7 @@ describe("test controller",() => {
 		assert.deepEqual(bobClient1.eventLog, []);
 		assert.deepEqual(bobClient2.eventLog, [["msg"]]);
 	});
-	
+
 	it("kick other on join", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -678,10 +679,10 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code).start();
-		
+
 		const bobClient1 = new Client(room, "Bob");
 		assert.deepEqual(bobClient1.status, "joined");
 		const bobClient2 = new Client(room, "Bob");
@@ -689,7 +690,7 @@ describe("test controller",() => {
 		assert.deepEqual(bobClient1.status, "disconnected");
 		assert.deepEqual(bobClient1.closeReason, "only 1 connection allowed");
 	});
-	
+
 	it("performance now()", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -705,7 +706,7 @@ describe("test controller",() => {
 				`
 			}
 		}
-		
+
 		const room = new Room();
 		new QuickJSController(room, quickJS, code).start();
 		const bobClient1 = new Client(room, "Bob");
@@ -714,4 +715,29 @@ describe("test controller",() => {
 		assert.equal(typeof b, "number", "performance a is number");
 		assert.ok(b > a, "performance checked");
 	});
+	
+	it("import remote", {timeout: 10500}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+                    import { createEvent, createStore} from 'https://cdn.jsdelivr.net/npm/effector/effector.mjs'
+
+                    export const add = createEvent();
+                    const $counter = createStore(0);
+                    $counter.on(add, (count, num) => count + num);
+
+                    export const getCounter = () => $counter.getState();
+				`
+			}
+		}
+
+		const room = new Room();
+		await new QuickJSController(room, quickJSAsync, code).startAsync();
+		const client = new Client(room, "Bob");
+		client.call("add", 5);
+		client.call("add", 10);
+		assert.equal(client.call("getCounter"), 15, "effector counter works");
+	});
 });
+
