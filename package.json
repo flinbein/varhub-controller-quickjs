@@ -1,6 +1,6 @@
 {
   "name": "@flinbein/varhub-controller-quickjs",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "node": ">=20.0.0",
   "type": "module",
   "types": "./src/index.ts",

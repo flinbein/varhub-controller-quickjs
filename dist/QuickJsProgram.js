@@ -24,7 +24,7 @@ export class QuickJsProgram extends UsingDisposable {
         super();
         this.#getSource = getSource;
         const context = this.#context = quickJS.newContext();
-        context.runtime.setMemoryLimit(1000000);
+        context.runtime.setMemoryLimit(100000000);
         this.#intervalManager.settleContext(context);
         this.#timeoutManager.settleContext(context);
         this.#immediateManager.settleContext(context);
