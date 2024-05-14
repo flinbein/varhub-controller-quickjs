@@ -155,16 +155,17 @@ export class QuickJsProgram extends UsingDisposable {
     }
     dispose() {
         this.#alive = false;
-        // wait for complete current jobs
-        setImmediate(() => {
-            for (let module of this.#loadedModules.values()) {
-                if (module.alive)
+        for (let module of this.#loadedModules.values())
+            if (module.alive)
+                try {
                     module.dispose();
-            }
-            for (let ownedDisposableItem of this.#ownedDisposableItems) {
-                if (ownedDisposableItem.alive)
+                }
+                catch { }
+        for (let ownedDisposableItem of this.#ownedDisposableItems)
+            if (ownedDisposableItem.alive)
+                try {
                     ownedDisposableItem.dispose();
-            }
-        });
+                }
+                catch { }
     }
 }

@@ -1,6 +1,10 @@
 import { Scope, UsingDisposable } from "quickjs-emscripten";
 import { Lifetime } from "quickjs-emscripten-core";
 function wrap(scope, context, data) {
+    const typedArrayWrap = getTypedArrayWrapper(context);
+    const wrappedArray = typedArrayWrap(data);
+    if (wrappedArray)
+        return scope.manage(wrappedArray);
     if (data instanceof Lifetime && data.owner === context.runtime)
         return data;
     const innerHandle = handleMap.get(data);
@@ -38,10 +42,100 @@ function wrap(scope, context, data) {
     }
     throw new Error(`unwrappable type: ${typeof data}`);
 }
+function dumpValue(context, valueUnscoped) {
+    return Scope.withScope(scope => {
+        const dumperHandle = scope.manage(getRecursiveDumperCreator(context)());
+        const cache = new Map;
+        function extractValue(value) {
+            const formResult = context.callFunction(dumperHandle, context.undefined, value);
+            const formHandle = scope.manage(context.unwrapResult(formResult));
+            const type = context.getProp(formHandle, 0).consume(h => context.getString(h));
+            if (type === "null") {
+                cache.set(valueUnscoped.value, null);
+                return null;
+            }
+            if (type === "primitive") {
+                return context.getProp(formHandle, 1).consume(h => context.dump(h));
+            }
+            if (type === "dump") {
+                const id = context.getProp(formHandle, 1).consume(h => context.getNumber(h));
+                const result = context.getProp(formHandle, 2).consume(h => context.dump(h));
+                cache.set(id, result);
+                return result;
+            }
+            const id = context.getProp(formHandle, 1).consume(h => context.getNumber(h));
+            if (cache.has(id))
+                return cache.get(id);
+            if (type === "buffer") {
+                const lifeBuffer = context.getProp(formHandle, 2).consume(h => context.getArrayBuffer(h));
+                scope.manage(lifeBuffer);
+                const u8 = lifeBuffer.value;
+                const result = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+                cache.set(id, result);
+                return result;
+            }
+            if (type === "typedArray") {
+                const arrayType = context.getProp(formHandle, 2).consume(h => context.getString(h));
+                const arrayTypeConstructor = globalThis[arrayType];
+                if (!arrayTypeConstructor)
+                    return null;
+                if (Object.getPrototypeOf(arrayTypeConstructor) !== TypedArray)
+                    return null;
+                const buffer = context.getProp(formHandle, 3).consume(extractValue);
+                const byteOffset = context.getProp(formHandle, 4).consume(h => context.getNumber(h));
+                const length = context.getProp(formHandle, 5).consume(h => context.getNumber(h));
+                const result = new arrayTypeConstructor(buffer, byteOffset, length);
+                cache.set(id, result);
+                return result;
+            }
+            if (type === "array") {
+                const length = context.getProp(formHandle, 2).consume(h => context.getNumber(h));
+                const result = [];
+                cache.set(id, result);
+                context.getProp(formHandle, 3).consume(arrayHandle => {
+                    for (let i = 0; i < length; i++) {
+                        result[i] = context.getProp(arrayHandle, i).consume(extractValue);
+                    }
+                });
+                return result;
+            }
+            if (type === "error") {
+                const errorConstructorName = context.getProp(formHandle, 2).consume(h => context.getString(h));
+                const errorConstructor = globalThis[errorConstructorName] ?? Error;
+                if (!errorConstructor)
+                    return null;
+                if (!(Object.create(errorConstructor?.prototype) instanceof Error))
+                    return null;
+                const result = Object.create(errorConstructor?.prototype);
+                cache.set(id, result);
+                const keys = context.getProp(formHandle, 3).consume(h => context.dump(h));
+                context.getProp(formHandle, 4).consume(objHandle => {
+                    for (let key of keys) {
+                        result[key] = context.getProp(objHandle, key).consume(extractValue);
+                    }
+                });
+                return result;
+            }
+            if (type === "object") {
+                const keys = context.getProp(formHandle, 2).consume(h => context.dump(h));
+                const result = {};
+                cache.set(id, result);
+                context.getProp(formHandle, 3).consume(objHandle => {
+                    for (let key of keys) {
+                        result[key] = context.getProp(objHandle, key).consume(extractValue);
+                    }
+                });
+                return result;
+            }
+            return null;
+        }
+        return extractValue(valueUnscoped);
+    });
+}
 function dumpPromisify(context, valueUnscoped) {
     const promiseState = context.getPromiseState(valueUnscoped);
     if (promiseState.type === "fulfilled" && promiseState.notAPromise) {
-        const dump = context.dump(valueUnscoped);
+        const dump = dumpValue(context, valueUnscoped);
         promiseState.value.dispose();
         return dump;
     }
@@ -60,11 +154,11 @@ function dumpPromisify(context, valueUnscoped) {
             if (innerPromiseState.type !== "fulfilled" || !innerPromiseState.notAPromise) {
                 throw dumpPromisify(context, resolvedResult.error);
             }
-            const dump = context.dump(resolvedResult.error);
+            const dump = dumpValue(context, resolvedResult.error);
             resolvedResult.error.dispose();
             throw dump;
         }
-        const dump = context.dump(resolvedResult.value);
+        const dump = dumpValue(context, resolvedResult.value);
         resolvedResult.value.dispose();
         if (valueUnscoped.alive)
             valueUnscoped.dispose();
@@ -186,12 +280,17 @@ export class ShortLifeValueWrapper extends ShortLifeContextWrapper {
         });
     }
     callAndDump(thisArg = undefined, ...args) {
+        let callResult;
         try {
-            return this.call(thisArg, ...args).dump();
+            callResult = this.call(thisArg, ...args);
         }
         catch (error) {
-            throw error.dump();
+            if (error instanceof ShortLifeValueWrapper) {
+                throw error.dump();
+            }
+            throw error;
         }
+        return callResult.dump();
     }
     get alive() {
         return this.#scope.alive;
@@ -200,3 +299,81 @@ export class ShortLifeValueWrapper extends ShortLifeContextWrapper {
         this.#scope.dispose();
     }
 }
+const _typedArrayDump = Symbol();
+function getRecursiveDumperCreator(context) {
+    if (_typedArrayDump in context)
+        return context[_typedArrayDump];
+    const unwrapCodeResult = context.evalCode(unwrapCode, "", { type: "global", strip: true, strict: true });
+    const unwrapFnHandle = context.unwrapResult(unwrapCodeResult);
+    return context[_typedArrayDump] = function () {
+        const uwResult = context.callFunction(unwrapFnHandle, context.undefined);
+        return context.unwrapResult(uwResult);
+    };
+}
+const TypedArray = Object.getPrototypeOf(Uint8Array);
+const _typedArrayWrap = Symbol();
+function getTypedArrayWrapper(context) {
+    if (_typedArrayWrap in context)
+        return context[_typedArrayWrap];
+    const unwrapCodeResult = context.evalCode(wrapArrayCode, "", { type: "global", strip: true, strict: true });
+    const wrapFnHandle = context.unwrapResult(unwrapCodeResult);
+    return context[_typedArrayWrap] = function (value) {
+        if (value instanceof ArrayBuffer)
+            return context.newArrayBuffer(value);
+        if (!(value instanceof TypedArray))
+            return undefined;
+        const buffer = value.buffer;
+        const bufferPart = buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+        const bufferName = String(value?.constructor?.name);
+        const nameHandle = context.newString(bufferName);
+        const bufferHandle = context.newArrayBuffer(bufferPart);
+        const arrayResult = context.callFunction(wrapFnHandle, context.undefined, nameHandle, bufferHandle);
+        nameHandle.dispose();
+        bufferHandle.dispose();
+        return context.unwrapResult(arrayResult);
+    };
+}
+// language=javascript
+const unwrapCode = `
+    const TypedArray = Object.getPrototypeOf(Uint8Array);
+    () => {
+        const idWeakMap = new WeakMap();
+        let _id = 0;
+        const getId = (obj) => {
+            if (idWeakMap.has(obj)) return idWeakMap.get(obj);
+            const id = _id++;
+            idWeakMap.set(obj, id);
+            return id;
+		}
+        
+        return (value) => {
+            if (value === null) return ["null"];
+            if (typeof value !== "object") return ["primitive", value];
+            const id = getId(value);
+            if (value instanceof Error) {
+                const names = Object.getOwnPropertyNames(value);
+                if (!names.includes("name")) names.push("name");
+                return ["error", id, value?.constructor?.name, names, value];
+            }
+            if (value instanceof ArrayBuffer) {
+                return ["buffer", id, value];
+            }
+            if (Array.isArray(value)) {
+                return ["array", id, value.length, value];
+            }
+            if (value instanceof TypedArray) {
+                return ["typedArray", id, value.constructor?.name, value.buffer, value.byteOffset, value.length];
+            }
+            const keys = Object.getOwnPropertyNames(value);
+            return ["object", id, keys, value];
+        }
+
+    }
+`;
+// language=javascript
+const wrapArrayCode = `
+	(type, buffer) => {
+        if (type === "ArrayBuffer") return buffer;
+        return new globalThis[type](buffer);
+	}
+`;

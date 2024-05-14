@@ -49,6 +49,9 @@ class Client {
 		const connection = this.#connection = room.createConnection(id, password, config);
 		connection.on("disconnect", (ignored, reason) => {
 			this.#closeReason = reason;
+			for (let eventName of this.#rpcResultEmitter.eventNames()) {
+				this.#rpcResultEmitter.emit(eventName, 3);
+			}
 		})
 		connection.on("event", (eventName, ...eventArgs) => {
 			const [eventId, ...args] = eventArgs;
@@ -85,12 +88,14 @@ class Client {
 		this.#rpcResultEmitter.once(rpcId as any, (errorCode, result) => {
 			code = [errorCode, result];
 			if (!resolver) return;
+			if (errorCode === 3) resolver[1](new Error(`room destroyed`));
 			if (errorCode === 2) resolver[1](new Error(`no method: ${methodName}`));
 			if (errorCode) resolver[1](result);
 			resolver[0](result);
 		})
 		this.#connection.message("$rpc", rpcId, methodName, ...args);
 		if (code) {
+			if (code[0] === 3) return undefined;
 			if (code[0] === 2) throw new Error(`no method: ${methodName}`);
 			if (code[0]) throw code[1];
 			return code[1];
@@ -715,7 +720,7 @@ describe("test controller",() => {
 		assert.equal(typeof b, "number", "performance a is number");
 		assert.ok(b > a, "performance checked");
 	});
-	
+
 	it("import remote", {timeout: 10500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",

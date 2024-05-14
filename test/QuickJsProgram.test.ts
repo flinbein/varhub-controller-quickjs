@@ -394,4 +394,124 @@ describe("test program",() => {
 			assert.deepEqual(error, ["repeatAsyncThrow", 1, 2, 3])
 		}
 	});
+
+	it("dump circular object in array", async () => {
+
+		const sourceConfig = sources({
+			"index.js": /* language=JavaScript */ `
+                export let result = [100, 200, 300];
+                result[1] = {value: result} ;
+
+			`
+		})
+
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const indexModule = program.createModule("index.js");
+		const result = indexModule.getProp("result") as any[];
+		assert.equal(result.length, 3, "result length");
+		assert.equal(result[0], 100, "result [0]");
+		assert.equal(result[2], 300, "result [2]");
+		assert.equal(result[1].value, result, "result deep");
+	});
+
+	it("dump circular array in object", async () => {
+
+		const sourceConfig = sources({
+			"index.js": /* language=JavaScript */ `
+                export let result = {x: 1};
+                result.y = [result, result];
+
+			`
+		})
+
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const indexModule = program.createModule("index.js");
+		const result = indexModule.getProp("result") as any;
+		assert.equal(Object.keys(result).length, 2, "result length");
+		assert.equal(result.x, 1, "result.x");
+		assert.equal(result.y.length, 2, "result.y is array[2]");
+		assert.equal(result.y[0], result, "result deep");
+	});
+
+	it("dump Uint16Array in object", async () => {
+
+		const sourceConfig = sources({
+			"index.js": /* language=JavaScript */ `
+                const a = Uint16Array.of(1, 2, 3);
+                export let result = [a, a];
+
+			`
+		})
+
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const indexModule = program.createModule("index.js");
+		const result = indexModule.getProp("result") as any[];
+		assert.equal(result.length, 2, "result length");
+		assert.equal(result[0], result[1], "same array inside");
+		assert.equal(result[0] instanceof Uint16Array, true, "result[0] is Uint16Array");
+		assert.equal(result[0].length, 3, "Uint16Array length");
+		assert.equal(result[0][1], 2, "Uint16Array value");
+	});
+
+	it("Uint16Array has same buffers", async () => {
+
+		const sourceConfig = sources({
+			"index.js": /* language=JavaScript */ `
+                const a = Uint16Array.of(1, 2, 3);
+                const b = new Uint16Array(a.buffer, 2, 2);
+                export let result = [a, b];
+
+			`
+		})
+
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const indexModule = program.createModule("index.js");
+		const result = indexModule.getProp("result") as any[];
+		assert.equal(result[0].buffer, result[1].buffer, "same buffers");
+		assert.equal(result[0][1], 2, "Uint16Array[0] value[1]");
+		assert.equal(result[1][1], 3, "Uint16Array[0] value[1]");
+	});
+
+	it("dump error", async () => {
+
+		const sourceConfig = sources({
+			"index.js": /* language=JavaScript */ `
+				export const result = new SyntaxError("test");
+
+			`
+		})
+
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const indexModule = program.createModule("index.js");
+		const result = indexModule.getProp("result") as Error;
+		assert.equal(result instanceof Error, true, "result is error");
+		assert.equal(result.constructor, SyntaxError, "error constructor");
+		assert.equal(result.name, "SyntaxError", "error name");
+		assert.equal(result.message, "test", "error message");
+		assert.ok(result.stack?.length, "error has stack");
+	});
+	
+	it("wrap array of Uint16Array", async () => {
+		
+		const sourceConfig = sources({
+			"index.js": /* language=JavaScript */ `
+                export function check(value){
+    				if (!Array.isArray(value)) return ["wrong arr type"];
+                    if (value.length !== 1) return ["wrong arr length"];
+                    const c = value[0];
+                    if (!(c instanceof Uint16Array)) return ["wrong t type"];
+                    if (c.length !== 2) return ["wrong t length", c.length];
+                    
+                    return 0;
+				}
+			`
+		})
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		const indexModule = program.createModule("index.js");
+		const t = Uint16Array.of(1,2,3);
+		const c = new Uint16Array(t.buffer, 2, 2);
+		const result = indexModule.call("check", undefined, [c]) as any[];
+		assert.equal(result, 0, "array of Uint16Array");
+	})
 })
