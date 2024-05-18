@@ -33,7 +33,8 @@ class Network implements ApiHelper {
 const apiSource: ApiSource = {Counter, Network}
 
 class Client {
-	readonly #connection: Connection
+	#connection: Connection | undefined
+	readonly #room: Room;
 	readonly #id: string;
 	readonly #password: string | undefined;
 	readonly #config: unknown;
@@ -43,35 +44,43 @@ class Client {
 	#rpcEventEmitter = new EventEmitter();
 	#closeReason: string | null | undefined = undefined;
 	constructor(room: Room, id: string, password?: string|undefined, config?: unknown) {
+		this.#room = room;
 		this.#id = id;
 		this.#password = password;
 		this.#config = config;
-		const connection = this.#connection = room.createConnection(id, password, config);
-		connection.on("disconnect", (ignored, reason) => {
-			this.#closeReason = reason;
-			for (let eventName of this.#rpcResultEmitter.eventNames()) {
-				this.#rpcResultEmitter.emit(eventName, 3);
-			}
-		})
-		connection.on("event", (eventName, ...eventArgs) => {
-			const [eventId, ...args] = eventArgs;
-			if (eventName === "$rpcResult") {
-				this.#rpcResultEmitter.emit(eventId, ...args);
-			} else if (eventName === "$rpcEvent") {
-				this.#eventLog.push(eventArgs);
-				this.#rpcEventEmitter.emit(eventId, ...args);
-			}
-		});
+		
 	}
 	
+	join(){
+		this.#connection = this.#room.createConnection()
+			.on("disconnect", (ignored, reason) => {
+				this.#closeReason = reason;
+				for (let eventName of this.#rpcResultEmitter.eventNames()) {
+					this.#rpcResultEmitter.emit(eventName, 3);
+				}
+			})
+			.on("event", (eventName, ...eventArgs) => {
+				const [eventId, ...args] = eventArgs;
+				if (eventName === "$rpcResult") {
+					this.#rpcResultEmitter.emit(eventId, ...args);
+				} else if (eventName === "$rpcEvent") {
+					this.#eventLog.push(eventArgs);
+					this.#rpcEventEmitter.emit(eventId, ...args);
+				}
+			})
+			.enter(this.#id, this.#password, this.#config)
+		;
+		return this;
+	}
+
 	get eventLog(){
 		return this.#eventLog;
 	}
-	
+
 	get closeReason(){
 		return this.#closeReason;
 	}
-	
+
 	get config(){
 		return this.#config;
 	}
@@ -93,7 +102,7 @@ class Client {
 			if (errorCode) resolver[1](result);
 			resolver[0](result);
 		})
-		this.#connection.message("$rpc", rpcId, methodName, ...args);
+		this.#connection!.message("$rpc", rpcId, methodName, ...args);
 		if (code) {
 			if (code[0] === 3) return undefined;
 			if (code[0] === 2) throw new Error(`no method: ${methodName}`);
@@ -104,22 +113,23 @@ class Client {
 			resolver = [success, fail];
 		})
 	}
-	
+
 	get status(){
-		return this.#connection.status
+		return this.#connection!.status
 	}
-	
+
 	leave(reason?: string | null){
-		return this.#connection.leave(reason);
+		return this.#connection!.leave(reason);
 	}
-	
-	on(eventName: string, handler: (...args: unknown[]) => void){
+
+	on(eventName: string, handler: (...args: unknown[]) => void): this{
 		this.#rpcEventEmitter.on(eventName, handler);
+		return this;
 	}
 }
 
 describe("test controller",() => {
-	
+
 	it("simple ctrl methods", {timeout: 500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -142,15 +152,15 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();
 		const greetMessage = bobClient.call("greet");
 		assert.equal(greetMessage, "Hello, Bob!", "greet message for Bob");
 
-		const bobClient2 = new Client(room, "Bob");
+		const bobClient2 = new Client(room, "Bob").join();
 		const greetMessage2 = bobClient2.call("greet");
 		assert.equal(greetMessage2, "Hello, Bob!", "greet message 2 for Bob");
 
-		const aliceClient = new Client(room, "Alice");
+		const aliceClient = new Client(room, "Alice").join();
 		const greetMessage3 = aliceClient.call("greet");
 		assert.equal(greetMessage3, "Hello, Alice!", "greet message for Alice");
 
@@ -175,7 +185,7 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();;
 		const greetResult = await bobClient.call("greet");
 		assert.equal(greetResult, "Hello, Bob!", "greet bob");
 	});
@@ -196,7 +206,7 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const client = new Client(room, "Bob");
+		const client = new Client(room, "Bob").join();;
 		assert.equal(client.call("getCurrent"), 0, "current = 0");
 		assert.equal(client.call("getNext"), 1, "next = 0");
 		assert.equal(client.call("getCurrent"), 1, "current = 1");
@@ -217,7 +227,7 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const client = new Client(room, "Bob");
+		const client = new Client(room, "Bob").join();
 		assert.throws(
 			() => client.call("getError"),
 			(error) => error === 0,
@@ -243,7 +253,7 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const client = new Client(room, "Bob");
+		const client = new Client(room, "Bob").join();
 		assert.equal(
 			await client.call("fetch", "https://google.com"),
 			"fetched:https://google.com",
@@ -269,7 +279,7 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const client = new Client(room, "Bob");
+		const client = new Client(room, "Bob").join();
 		await assert.rejects(
 			async () => await client.call("fetchWithError", "https://google.com"),
 			(error: any) => error.status === 400,
@@ -293,7 +303,7 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const client = new Client(room, "Bob");
+		const client = new Client(room, "Bob").join();
 		assert.equal(client.call("getRoomMessage"), null, "default message is null");
 		client.call("setRoomMessage", "test");
 		assert.equal(room.publicMessage, "test", "message is test");
@@ -317,16 +327,16 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();
 		assert.equal(bobClient.call("getRoomClosed"), false, "default closed is false");
 
-		const eveClient = new Client(room, "Eve");
+		const eveClient = new Client(room, "Eve").join();
 		assert.equal(eveClient.status, "joined", "Eve joined");
 
 		bobClient.call("setRoomClosed", true);
 		assert.equal(bobClient.call("getRoomClosed"), true, "next closed is true");
 
-		const aliceClient = new Client(room, "Alice");
+		const aliceClient = new Client(room, "Alice").join();
 		assert.equal(aliceClient.status, "disconnected", "alice can not join");
 	});
 
@@ -345,7 +355,7 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();
 		assert.equal(room.destroyed, false, "room not destroyed");
 		bobClient.call("destroy");
 		assert.equal(room.destroyed, true, "room destroyed");
@@ -368,11 +378,11 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();
 		assert.equal(bobClient.call("isPlayerOnline", "Alice"), undefined, "Alice online is undefined");
 		assert.equal(bobClient.call("hasPlayer", "Alice"), false, "no player Alice");
 
-		const aliceClient = new Client(room, "Alice");
+		const aliceClient = new Client(room, "Alice").join();
 
 		assert.equal(bobClient.call("isPlayerOnline", "Alice"), true, "Alice online is true");
 		assert.equal(bobClient.call("hasPlayer", "Alice"), true, "has player Alice");
@@ -407,8 +417,8 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const bobClient = new Client(room, "Bob");
-		const aliceClient = new Client(room, "Alice");
+		const bobClient = new Client(room, "Bob").join();
+		const aliceClient = new Client(room, "Alice").join();
 		const aliceMessages: any[] = [];
 		aliceClient.on("message", value => aliceMessages.push(value));
 
@@ -434,7 +444,7 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const bobClient = new Client(room, "Bob", "", {foo: "bar"});
+		const bobClient = new Client(room, "Bob", "", {foo: "bar"}).join();
 		const bobData = bobClient.call("getPlayerData", "Bob");
 		assert.deepEqual(bobData, {foo: "bar"}, "Bob data is same");
 	});
@@ -460,14 +470,14 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();
 		assert.equal(bobClient.call("getLast"), "Bob", "Bob is last");
 
-		new Client(room, "Alice");
+		new Client(room, "Alice").join();
 		assert.equal(bobClient.call("getLast"), "Alice", "Alice is last");
 
 		bobClient.call("stopListen");
-		new Client(room, "Eve");
+		new Client(room, "Eve").join();
 		assert.equal(bobClient.call("getLast"), "Alice", "Alice is still last");
 	});
 
@@ -492,13 +502,13 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();
 		assert.equal(bobClient.call("getLast"), undefined, "no offline");
 
-		new Client(room, "Alice").leave();
+		new Client(room, "Alice").join().leave();
 		assert.equal(bobClient.call("getLast"), "Alice", "Alice disconnected first");
 
-		new Client(room, "Eve").leave();
+		new Client(room, "Eve").join().leave();
 		assert.equal(bobClient.call("getLast"), "Alice", "Alice still disconnected first");
 	});
 
@@ -533,7 +543,7 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, codeFoo, {apiHelperController, rpcController}).start();
 		new QuickJSController(room, quickJS, codeBar, {apiHelperController, rpcController}).start();
 
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();
 		assert.equal(bobClient.call("foo"), "Foo", "call runtime Foo");
 		assert.equal(bobClient.call("bar"), "Bar", "call runtime Bar");
 
@@ -556,7 +566,7 @@ describe("test controller",() => {
 		const room = new Room();
 		new QuickJSController(room, quickJS, code, {config: {foo: "bar"}}).start();
 
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();
 		assert.deepEqual(bobClient.call("getConfig"), {foo: "bar"}, "config is same");
 	});
 
@@ -574,7 +584,7 @@ describe("test controller",() => {
 		const room = new Room();
 		new QuickJSController(room, quickJS, code).start();
 
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();
 		assert.deepEqual(bobClient.call("getConfig"), undefined, "config is empty");
 	});
 
@@ -595,7 +605,7 @@ describe("test controller",() => {
 		.start()
 		;
 
-		const bobClient = new Client(room, "Bob");
+		const bobClient = new Client(room, "Bob").join();
 		assert.deepEqual(consoleEvents, [], "no events");
 		bobClient.call("doConsole", "log", 1, 2, 3);
 		assert.deepEqual(consoleEvents, [["log", 1, 2, 3]], "1 console event");
@@ -626,9 +636,9 @@ describe("test controller",() => {
 		const room = new Room();
 		new QuickJSController(room, quickJS, code).start();
 
-		const bobClient1 = new Client(room, "Bob");
-		const bobClient2 = new Client(room, "Bob");
-		const bobClient3 = new Client(room, "Bob");
+		const bobClient1 = new Client(room, "Bob").join();
+		const bobClient2 = new Client(room, "Bob").join();
+		const bobClient3 = new Client(room, "Bob").join();
 		assert.equal(bobClient1.status, "joined");
 		assert.equal(bobClient2.status, "joined");
 		assert.equal(bobClient3.status, "joined");
@@ -659,8 +669,8 @@ describe("test controller",() => {
 		const room = new Room();
 		new QuickJSController(room, quickJS, code).start();
 
-		const bobClient1 = new Client(room, "Bob");
-		const bobClient2 = new Client(room, "Bob");
+		const bobClient1 = new Client(room, "Bob").join();
+		const bobClient2 = new Client(room, "Bob").join();
 		assert.deepEqual(bobClient1.eventLog, []);
 		assert.deepEqual(bobClient2.eventLog, []);
 		bobClient1.call("sendOther");
@@ -688,9 +698,9 @@ describe("test controller",() => {
 		const room = new Room();
 		new QuickJSController(room, quickJS, code).start();
 
-		const bobClient1 = new Client(room, "Bob");
+		const bobClient1 = new Client(room, "Bob").join();
 		assert.deepEqual(bobClient1.status, "joined");
-		const bobClient2 = new Client(room, "Bob");
+		const bobClient2 = new Client(room, "Bob").join();
 		assert.deepEqual(bobClient2.status, "joined");
 		assert.deepEqual(bobClient1.status, "disconnected");
 		assert.deepEqual(bobClient1.closeReason, "only 1 connection allowed");
@@ -702,8 +712,7 @@ describe("test controller",() => {
 			source: {
 				"index.js": /* language=JavaScript */ `
                     export function testPerformance(){
-    					console.log("TEST-ER", performance.now);
-                        const a = performance.now();
+    					const a = performance.now();
                         for (let i = 0; i < 10000; i++) {}
                         const b = performance.now();
                         return [a,b];
@@ -714,7 +723,7 @@ describe("test controller",() => {
 
 		const room = new Room();
 		new QuickJSController(room, quickJS, code).start();
-		const bobClient1 = new Client(room, "Bob");
+		const bobClient1 = new Client(room, "Bob").join();
 		const [a,b] = bobClient1.call("testPerformance") as [number, number];
 		assert.equal(typeof a, "number", "performance a is number");
 		assert.equal(typeof b, "number", "performance a is number");
@@ -739,10 +748,37 @@ describe("test controller",() => {
 
 		const room = new Room();
 		await new QuickJSController(room, quickJSAsync, code).startAsync();
-		const client = new Client(room, "Bob");
+		const client = new Client(room, "Bob").join();
 		client.call("add", 5);
 		client.call("add", 10);
 		assert.equal(client.call("getCounter"), 15, "effector counter works");
 	});
+	
 });
 
+describe("test controller2", () => {
+	it("receive events on join", {timeout: 100}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+                    import room from "varhub:room";
+                    room.on("join", (player) => {
+                        room.send(player, "joined")
+                    });
+				`
+			}
+		}
+		
+		const room = new Room();
+		await new QuickJSController(room, quickJSAsync, code).startAsync();
+		let joined = false;
+		new Client(room, "Bob")
+			.on("joined", () => joined = true)
+			.join()
+			.leave()
+		;
+		assert.ok(joined, "client receive entered message");
+	})
+	
+})
