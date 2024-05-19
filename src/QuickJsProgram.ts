@@ -12,7 +12,6 @@ import { ShortLifeContextWrapper } from "./utils/wrapper.js"
 import { ConsoleHandler, ConsoleManager } from "./scope/ConsoleManager.js";
 import { InterruptManager } from "./InterruptManager.js";
 import { QuickJsProgramModule } from "./QuickJsProgramModule.js";
-import { PerformanceManager } from "./scope/PerformanceManager.js";
 import { VmCallResult } from "quickjs-emscripten-core";
 
 export type QuickJsProgramSource = {
@@ -48,7 +47,6 @@ export class QuickJsProgram extends UsingDisposable {
 		this.#intervalManager.settleContext(context);
 		this.#timeoutManager.settleContext(context);
 		this.#immediateManager.settleContext(context);
-		new PerformanceManager().settleContext(context);
 		if (settings.consoleHandler) {
 			const consoleManager = new ConsoleManager(settings.consoleHandler);
 			this.#ownedDisposableItems.add(consoleManager);

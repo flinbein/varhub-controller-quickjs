@@ -6,6 +6,7 @@ import { QuickJsProgram } from "./QuickJsProgram.js";
 import { RoomModuleHelper } from "./RoomModuleHelper.js";
 import { ApiModuleHelper } from "./ApiModuleHelper.js";
 import eventEmitterSource from "./EventEmitterSource.js";
+import { PerformanceModuleHelper } from "./PerformanceModuleHelper.js";
 
 
 export interface QuickJSControllerCode {
@@ -63,23 +64,24 @@ export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents
 	
 	#started = false;
 	start(): this{
-		if (this.#started) throw new Error("already starting");
-		this.#started = true;
-		new RoomModuleHelper(this.#room, this.#playerController, this.#program, "varhub:room");
-		this.#apiModuleHelper = new ApiModuleHelper(this.#apiHelperController, this.#program, "varhub:api/");
-		this.#rpcController.addHandler(this.#rpcHandler);
-		
+		this.#startModules();
 		this.#mainModule = this.#program.createModule(this.#mainModuleName, this.#source[this.#mainModuleName]);
 		return this;
 	}
 	
-	async startAsync() {
+	async startAsync(): Promise<this> {
+		this.#startModules();
+		this.#mainModule = await this.#program.createModuleAsync(this.#mainModuleName, this.#source[this.#mainModuleName]);
+		return this;
+	}
+	
+	#startModules(){
 		if (this.#started) throw new Error("already starting");
 		this.#started = true;
 		new RoomModuleHelper(this.#room, this.#playerController, this.#program, "varhub:room");
+		new PerformanceModuleHelper(this.#program, "varhub:performance");
 		this.#apiModuleHelper = new ApiModuleHelper(this.#apiHelperController, this.#program, "varhub:api/");
 		this.#rpcController.addHandler(this.#rpcHandler);
-		this.#mainModule = await this.#program.createModuleAsync(this.#mainModuleName, this.#source[this.#mainModuleName]);
 	}
 	
 	#consoleHandler: ConsoleHandler = (level, ...args: any[]) => {
@@ -107,7 +109,6 @@ export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents
 		const possibleApiModuleName = this.#apiModuleHelper?.getPossibleApiModuleName(file);
 		if (possibleApiModuleName != null) return this.#apiModuleHelper?.createApiSource(possibleApiModuleName, program);
 		if (file in this.#source) return this.#source[file];
-		// todo: load async https
 		if ("evalCodeAsync" in this.#quickJS) {
 			const url = this.#tryGetUrl(file);
 			if (url) return this.#fetchSource(url);

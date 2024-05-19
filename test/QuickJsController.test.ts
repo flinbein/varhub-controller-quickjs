@@ -3,10 +3,11 @@ import { describe, it } from "node:test";
 import { EventEmitter } from "node:events";
 import { QuickJSController, QuickJSControllerCode } from "../src/QuickJSController.js";
 import { Room, ApiSource, ApiHelper, ApiHelperController, Connection, RPCController } from "@flinbein/varhub";
+import quickJsAsyncVariant from "@jitl/quickjs-ng-wasmfile-release-asyncify"
 
-import { getQuickJS, newQuickJSAsyncWASMModule } from "quickjs-emscripten"
+import { getQuickJS, newQuickJSAsyncWASMModuleFromVariant } from "quickjs-emscripten"
 const quickJS = await getQuickJS();
-const quickJSAsync = await newQuickJSAsyncWASMModule();
+const quickJSAsync = await newQuickJSAsyncWASMModuleFromVariant(quickJsAsyncVariant as any);
 
 
 
@@ -706,30 +707,6 @@ describe("test controller",() => {
 		assert.deepEqual(bobClient1.closeReason, "only 1 connection allowed");
 	});
 
-	it("performance now()", {timeout: 500}, async () => {
-		const code: QuickJSControllerCode = {
-			main: "index.js",
-			source: {
-				"index.js": /* language=JavaScript */ `
-                    export function testPerformance(){
-    					const a = performance.now();
-                        for (let i = 0; i < 10000; i++) {}
-                        const b = performance.now();
-                        return [a,b];
-					}
-				`
-			}
-		}
-
-		const room = new Room();
-		new QuickJSController(room, quickJS, code).start();
-		const bobClient1 = new Client(room, "Bob").join();
-		const [a,b] = bobClient1.call("testPerformance") as [number, number];
-		assert.equal(typeof a, "number", "performance a is number");
-		assert.equal(typeof b, "number", "performance a is number");
-		assert.ok(b > a, "performance checked");
-	});
-
 	it("import remote", {timeout: 10500}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -754,9 +731,6 @@ describe("test controller",() => {
 		assert.equal(client.call("getCounter"), 15, "effector counter works");
 	});
 	
-});
-
-describe("test controller2", () => {
 	it("receive events on join", {timeout: 100}, async () => {
 		const code: QuickJSControllerCode = {
 			main: "index.js",
@@ -774,11 +748,34 @@ describe("test controller2", () => {
 		await new QuickJSController(room, quickJSAsync, code).startAsync();
 		let joined = false;
 		new Client(room, "Bob")
-			.on("joined", () => joined = true)
+		.on("joined", () => joined = true)
 			.join()
 			.leave()
 		;
 		assert.ok(joined, "client receive entered message");
-	})
+	});
 	
-})
+	it("varhub:performance", {timeout: 100}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+                    import * as performance from "varhub:performance";
+                    export function f() {
+						const a = performance.now();
+                        for (let i=0; i<100; i++);
+						const b = performance.now();
+                        return [a, b];
+                    }
+				`
+			}
+		}
+		
+		const room = new Room();
+		await new QuickJSController(room, quickJSAsync, code).startAsync();
+		const [a, b] = new Client(room, "Bob").join().call("f") as any;
+		assert.equal(typeof a, "number", "a is number");
+		assert.equal(typeof b, "number", "a is number");
+		assert.ok(b > a, "performance works");
+	});
+});
