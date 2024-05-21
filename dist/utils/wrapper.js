@@ -43,7 +43,20 @@ function wrap(scope, context, data) {
     throw new Error(`unwrappable type: ${typeof data}`);
 }
 function dumpValue(context, valueUnscoped) {
+    //fast-dump
+    const type = context.typeof(valueUnscoped);
+    if (type === "undefined")
+        return undefined;
+    if (type !== "object")
+        return context.dump(valueUnscoped);
     return Scope.withScope(scope => {
+        const structureDumpSymbolHandle = getStructureDumpSymbolHandle(context);
+        const structureHandle = scope.manage(context.getProp(valueUnscoped, structureDumpSymbolHandle));
+        const typeOfStructure = context.typeof(structureHandle);
+        if (typeOfStructure === "unknown")
+            return null; // valueUnscoped is null or undefined. In this case = null;
+        if (typeOfStructure === "undefined")
+            return context.dump(valueUnscoped);
         const dumperHandle = scope.manage(getRecursiveDumperCreator(context)());
         const cache = new Map;
         function extractValue(value) {
@@ -51,7 +64,6 @@ function dumpValue(context, valueUnscoped) {
             const formHandle = scope.manage(context.unwrapResult(formResult));
             const type = context.getProp(formHandle, 0).consume(h => context.getString(h));
             if (type === "null") {
-                cache.set(valueUnscoped.value, null);
                 return null;
             }
             if (type === "primitive") {
@@ -129,7 +141,7 @@ function dumpValue(context, valueUnscoped) {
             }
             return null;
         }
-        return extractValue(valueUnscoped);
+        return extractValue(structureHandle);
     });
 }
 function dumpPromisify(context, valueUnscoped) {
@@ -377,3 +389,9 @@ const wrapArrayCode = `
         return new globalThis[type](buffer);
 	}
 `;
+const _StructureDumpSymbolHandleKey = Symbol();
+function getStructureDumpSymbolHandle(context) {
+    if (_StructureDumpSymbolHandleKey in context)
+        return context[_StructureDumpSymbolHandleKey];
+    return context[_StructureDumpSymbolHandleKey] = context.newSymbolFor("varhub.structure");
+}

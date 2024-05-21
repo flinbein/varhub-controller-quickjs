@@ -29,7 +29,7 @@ function sourcesWithApi(
 	}
 }
 
-describe("test program",() => {
+describe("test program", () => {
 	it("simple methods", async () => {
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
@@ -399,9 +399,9 @@ describe("test program",() => {
 
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
-                export let result = [100, 200, 300];
-                result[1] = {value: result} ;
-
+                const array = [100, 200, 300];
+                array[1] = {value: array};
+				export const result = {[Symbol.for("varhub.structure")]: array}
 			`
 		})
 
@@ -418,9 +418,9 @@ describe("test program",() => {
 
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
-                export let result = {x: 1};
-                result.y = [result, result];
-
+                const obj = {x: 1};
+                obj.y = [obj, obj];
+                export const result = {[Symbol.for("varhub.structure")]: obj}
 			`
 		})
 
@@ -438,8 +438,7 @@ describe("test program",() => {
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
                 const a = Uint16Array.of(1, 2, 3);
-                export let result = [a, a];
-
+                export let result = {[Symbol.for("varhub.structure")]: [a, a]};
 			`
 		})
 
@@ -459,7 +458,7 @@ describe("test program",() => {
 			"index.js": /* language=JavaScript */ `
                 const a = Uint16Array.of(1, 2, 3);
                 const b = new Uint16Array(a.buffer, 2, 2);
-                export let result = [a, b];
+                export const result = {[Symbol.for("varhub.structure")]: [a, b]};
 
 			`
 		})
@@ -476,8 +475,7 @@ describe("test program",() => {
 
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
-				export const result = new SyntaxError("test");
-
+				export const result = {[Symbol.for("varhub.structure")]: new SyntaxError("test")};
 			`
 		})
 
@@ -513,5 +511,5 @@ describe("test program",() => {
 		const c = new Uint16Array(t.buffer, 2, 2);
 		const result = indexModule.call("check", undefined, [c]) as any[];
 		assert.equal(result, 0, "array of Uint16Array");
-	})
+	});
 })

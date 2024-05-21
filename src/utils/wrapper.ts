@@ -36,7 +36,19 @@ function wrap(scope: Scope, context: QuickJSContext, data: unknown): QuickJSHand
 }
 
 function dumpValue(context: QuickJSContext, valueUnscoped: QuickJSHandle): unknown {
+	
+	//fast-dump
+	const type = context.typeof(valueUnscoped);
+	if (type === "undefined") return undefined;
+	if (type !== "object") return context.dump(valueUnscoped);
+	
 	return Scope.withScope(scope => {
+		const structureDumpSymbolHandle = getStructureDumpSymbolHandle(context);
+		const structureHandle = scope.manage(context.getProp(valueUnscoped, structureDumpSymbolHandle));
+		const typeOfStructure = context.typeof(structureHandle);
+		if (typeOfStructure === "unknown") return null; // valueUnscoped is null or undefined. In this case = null;
+		if (typeOfStructure === "undefined") return context.dump(valueUnscoped);
+		
 		const dumperHandle = scope.manage(getRecursiveDumperCreator(context)());
 		const cache = new Map<number, any>;
 		
@@ -45,7 +57,6 @@ function dumpValue(context: QuickJSContext, valueUnscoped: QuickJSHandle): unkno
 			const formHandle = scope.manage(context.unwrapResult(formResult));
 			const type = context.getProp(formHandle, 0).consume(h => context.getString(h));
 			if (type === "null") {
-				cache.set(valueUnscoped.value, null);
 				return null;
 			}
 			if (type === "primitive") {
@@ -119,7 +130,7 @@ function dumpValue(context: QuickJSContext, valueUnscoped: QuickJSHandle): unkno
 			return null;
 		}
 		
-		return extractValue(valueUnscoped);
+		return extractValue(structureHandle);
 	});
 }
 
@@ -311,11 +322,11 @@ export class ShortLifeValueWrapper extends ShortLifeContextWrapper {
 }
 
 const _typedArrayDump = Symbol();
+
 function getRecursiveDumperCreator(context: QuickJSContext): () => QuickJSHandle {
 	if (_typedArrayDump in context) return context[_typedArrayDump] as any;
 	const unwrapCodeResult = context.evalCode(unwrapCode, "", {type: "global", strip: true, strict: true});
 	const unwrapFnHandle = context.unwrapResult(unwrapCodeResult);
-	
 	return (context as any)[_typedArrayDump] = function(){
 		const uwResult = context.callFunction(unwrapFnHandle, context.undefined);
 		return context.unwrapResult(uwResult);
@@ -324,6 +335,7 @@ function getRecursiveDumperCreator(context: QuickJSContext): () => QuickJSHandle
 
 const TypedArray = Object.getPrototypeOf(Uint8Array);
 const _typedArrayWrap = Symbol();
+
 function getTypedArrayWrapper(context: QuickJSContext): (array: unknown) => QuickJSHandle | undefined {
 	if (_typedArrayWrap in context) return context[_typedArrayWrap] as any;
 	const unwrapCodeResult = context.evalCode(wrapArrayCode, "", {type: "global", strip: true, strict: true});
@@ -389,3 +401,10 @@ const wrapArrayCode = `
         return new globalThis[type](buffer);
 	}
 `
+
+const _StructureDumpSymbolHandleKey = Symbol();
+function getStructureDumpSymbolHandle(context: QuickJSContext): QuickJSHandle {
+	if (_StructureDumpSymbolHandleKey in context) return context[_StructureDumpSymbolHandleKey] as QuickJSHandle;
+	return (context as any)[_StructureDumpSymbolHandleKey] = context.newSymbolFor("varhub.structure");
+	
+}
