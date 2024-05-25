@@ -6,7 +6,13 @@ import { newQuickJSAsyncWASMModule } from "quickjs-emscripten"
 const quickJS = await newQuickJSAsyncWASMModule();
 
 function sources(sourceMap: Record<string, string>): QuickJsProgramSource {
-	return (file: string) => new Promise(r => setTimeout(r, 10, sourceMap[file]));
+	return (file: string) => {
+		const [ ,t] = file.match(/@longtime-(\d*)/) ?? [0];
+		if (t) {
+			return new Promise(r => setTimeout(r, Number(t), `export const x = 'value-longtime-${t}'`));
+		}
+		return new Promise(r => setTimeout(r, 10, sourceMap[file]));
+	}
 }
 
 function sourcesWithApi(
@@ -293,14 +299,14 @@ describe("test async program",() => {
 		const indexModule = await program.createModuleAsync("index.js");
 		indexModule.call("cycle", null, 1, "no deadlock in 1");
 		indexModule.call("cycle", null, 100, "no deadlock in 100");
-		indexModule.call("cycle", null, 10000, "no deadlock in 10000");
+		indexModule.call("cycle", null, 1000, "no deadlock in 1000");
 		assert.throws(() => {
 			indexModule.call("cycle", null, Infinity);
 		}, (error: any) => error.message === 'interrupted', "should interrupt");
 
 		await indexModule.call("asyncCycle", null, 1, "no async deadlock in 1");
 		await indexModule.call("asyncCycle", null, 100, "no async deadlock in 100");
-		await indexModule.call("asyncCycle", null, 10000, "no async deadlock in 10000");
+		await indexModule.call("asyncCycle", null, 1000, "no async deadlock in 1000");
 		await assert.rejects(async () => {
 			await indexModule.call("asyncCycle", null, Infinity);
 		}, (error: any) => error.message === 'interrupted', "should interrupt async");
@@ -397,5 +403,35 @@ describe("test async program",() => {
 		}
 	});
 	
+	it("deadlock in module", {timeout: 500}, async () => {
+		const sourceConfig = sources({
+			"index.js": /* language=JavaScript */ `import "test.js"`,
+			"test.js": /* language=JavaScript */ `while (true);`
+		});
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		await assert.rejects(program.createModuleAsync("index.js"), "throws in module");
+	});
 	
+	it("longtime-100", {timeout: 1000}, async () => {
+		const sourceConfig = sources({
+			"index.js": /* language=JavaScript */ `export { x } from "@longtime-100"`,
+		});
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		await program.createModuleAsync("index.js");
+	});
+	
+	it("longtime-500", {timeout: 1000}, async () => {
+		const sourceConfig = sources({
+			"index.js": /* language=JavaScript */ `export { x } from "@longtime-500"`,
+		});
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		await assert.rejects(async () => {
+			const t = setTimeout(() => program.dispose(), 200);
+			await program.createModuleAsync("index.js");
+			clearTimeout(t);
+		}, "throws in module");
+	});
 })

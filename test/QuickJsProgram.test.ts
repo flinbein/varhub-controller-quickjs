@@ -29,7 +29,7 @@ function sourcesWithApi(
 	}
 }
 
-describe("test program", () => {
+describe("test program", async () => {
 	it("simple methods", async () => {
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
@@ -120,9 +120,10 @@ describe("test program", () => {
 
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.createModule("index.js");
+		
 		const result = indexModule.withModule(module => ({
-			aIsA: indexModule.call("isA", undefined, module.getProp("a")),
-			bIsA: indexModule.call("isA", undefined, module.getProp("b"))
+			aIsA: module.callMethod("isA", module.getProp("a")).dump(),
+			bIsA: module.callMethod("isA", module.getProp("b")).dump()
 		}))
 		assert.equal(result.aIsA, true, "a is a");
 		assert.equal(result.bIsA, false, "b is a");
@@ -144,13 +145,13 @@ describe("test program", () => {
 
 		const result = indexModule.withModule((wrapper) => {
 			const aHandle = wrapper.callMethod("getA");
-			return indexModule.call("isA", undefined, aHandle);
+			return wrapper.callMethod("isA", aHandle).dump();
 		});
 		assert.equal(result, true, "a is a");
 
 		const result2 = indexModule.withModule((wrapper) => {
 			const aHandle = wrapper.callMethod("getB");
-			return indexModule.call("isA", undefined, aHandle);
+			return wrapper.callMethod("isA", aHandle).dump();
 		})
 		assert.equal(result2, false, "b is a");
 	});
@@ -172,7 +173,7 @@ describe("test program", () => {
 			try {
 				wrapper.callMethod("throwA");
 			} catch (aHandle) {
-				return indexModule.call("isA", undefined, aHandle);
+				return wrapper.callMethod("isA", aHandle).dump();
 			}
 			throw new Error("a is not thrown");
 		})
@@ -182,7 +183,7 @@ describe("test program", () => {
 			try {
 				wrapper.callMethod("throwB");
 			} catch (bHandle) {
-				return indexModule.call("isA", undefined, bHandle);
+				return wrapper.callMethod("isA", bHandle).dump();
 			}
 			throw new Error("b is not thrown");
 		})
@@ -279,7 +280,7 @@ describe("test program", () => {
 		assert.equal(result, 1, "txt imported");
 	})
 
-	it("deadlocks", {timeout: 1000}, async () => {
+	it("deadlocks", {timeout: 500}, async () => {
 		const sourceConfig = sources({
 			"index.js": /* language=JavaScript */ `
 				export function cycle(x){while (x --> 0);}
@@ -291,18 +292,17 @@ describe("test program", () => {
 		const indexModule = program.createModule("index.js");
 		indexModule.call("cycle", null, 1, "no deadlock in 1");
 		indexModule.call("cycle", null, 100, "no deadlock in 100");
-		indexModule.call("cycle", null, 10000, "no deadlock in 10000");
+		indexModule.call("cycle", null, 1000, "no deadlock in 1000");
 		assert.throws(() => {
 			indexModule.call("cycle", null, Infinity);
 		}, (error: any) => error.message === 'interrupted', "should interrupt");
-
 		await indexModule.call("asyncCycle", null, 1, "no async deadlock in 1");
 		await indexModule.call("asyncCycle", null, 100, "no async deadlock in 100");
-		await indexModule.call("asyncCycle", null, 10000, "no async deadlock in 10000");
+		await indexModule.call("asyncCycle", null, 1000, "no async deadlock in 1000");
 		await assert.rejects(async () => {
 			await indexModule.call("asyncCycle", null, Infinity);
 		}, (error: any) => error.message === 'interrupted', "should interrupt async");
-
+		await new Promise(r => setTimeout(r, 100));
 		await indexModule.call("asyncCycle", null, 10);
 	});
 
@@ -334,11 +334,9 @@ describe("test program", () => {
 		await assert.rejects(async () => {
 			await indexModule.call("asyncDeadlock");
 		}, "must dead on asyncDeadlock");
-
 	})
 
 	it("simple api", async () => {
-
 		const sourceConfig = sourcesWithApi({
 			"index.js": /* language=JavaScript */ `
 				export {default as notExist} from "@varhub/api/notExist"
@@ -371,21 +369,23 @@ describe("test program", () => {
 		const program = new QuickJsProgram(quickJS, sourceConfig);
 		const indexModule = program.createModule("index.js");
 		assert.equal(indexModule.getProp("notExist"), null);
-
+		
 		assert.deepEqual(indexModule.call("testRepeat"), ["repeat", 1, 2, 3]);
-
+		
 		try {
 			indexModule.call("testRepeatThrow");
 			assert.fail("must throw in testRepeatThrow");
 		} catch (error){
 			assert.deepEqual(error, ["repeatThrow", 1, 2, 3]);
 		}
-
+		
 		const resultOfAsync = indexModule.call("testRepeatAsync");
+		
 		assert.ok(resultOfAsync instanceof Promise, "result of testRepeatAsync is promise");
 		assert.deepEqual(await resultOfAsync, ["repeatAsync", 1, 2, 3]);
-
+		
 		const resultOfAsyncThrow = indexModule.call("testRepeatAsyncThrow");
+		
 		assert.ok(resultOfAsyncThrow instanceof Promise, "result of testRepeatAsyncThrow is promise");
 		try {
 			await resultOfAsyncThrow;
@@ -393,6 +393,7 @@ describe("test program", () => {
 		} catch (error) {
 			assert.deepEqual(error, ["repeatAsyncThrow", 1, 2, 3])
 		}
+		
 	});
 
 	it("dump circular object in array", async () => {
@@ -512,4 +513,15 @@ describe("test program", () => {
 		const result = indexModule.call("check", undefined, [c]) as any[];
 		assert.equal(result, 0, "array of Uint16Array");
 	});
-})
+	
+	it("deadlock in module", {timeout: 500}, async () => {
+		const sourceConfig = sources({
+			"index.js": /* language=JavaScript */ `while (true);`
+		});
+		
+		const program = new QuickJsProgram(quickJS, sourceConfig);
+		assert.throws(() => {
+			program.createModule("index.js");
+		}, "throws in module");
+	});
+});

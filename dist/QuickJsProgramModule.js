@@ -15,17 +15,16 @@ export class QuickJsProgramModule extends UsingDisposable {
             .consume((v) => this.#context.typeof(v));
     }
     call(methodName, thisArg = undefined, ...args) {
-        this.#interruptManager.clear();
         return this.withModule(wrapper => wrapper.getProp(methodName).callAndDump(thisArg, ...args));
     }
     getProp(propName) {
-        this.#interruptManager.clear();
         return this.withModule(wrapper => wrapper.getProp(propName).dump());
     }
     withModule(wrapper) {
         return Scope.withScope(scope => {
-            this.#interruptManager.clear();
-            return wrapper(new ShortLifeValueWrapper(scope, this.#context, this.#exports, true));
+            return this.#interruptManager.handle(() => {
+                return wrapper(new ShortLifeValueWrapper(scope, this.#context, this.#interruptManager, this.#exports, true));
+            });
         });
     }
     dump() {

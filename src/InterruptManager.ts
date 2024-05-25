@@ -1,42 +1,73 @@
 import { hrtime } from "node:process";
 
 export class InterruptManager {
-	#maxExecutionTimeNs: bigint;
+	#maxExecutionTime: bigint;
+	readonly #poolTime: bigint;
+	readonly #maxWorkTimeInPool: bigint;
 	
-	constructor(maxExecutionTimeNs: bigint) {
-		this.#maxExecutionTimeNs = maxExecutionTimeNs;
+	constructor(maxExecutionTimeNs: bigint, poolTimeNs: bigint, maxWorkTimeInPoolNs: bigint) {
+		this.#maxExecutionTime = maxExecutionTimeNs;
+		this.#poolTime = poolTimeNs;
+		this.#maxWorkTimeInPool = maxWorkTimeInPoolNs;
 	}
 	
-	#interruptImmediate: ReturnType<typeof setImmediate> | undefined = undefined;
-	#interruptTime = 0n;
+	#longStartHandleTime: bigint = 0n;
+	#longPoolAccum: bigint = 0n;
 	
-	#interruptTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
-	#interruptTimeSum = 0n;
+	#startHandleTime = 0n;
+	
+	handle = <T>(fn: () => T, overrideExecutionTime?: bigint): T => {
+		// throw on double-context
+		if (this.#startHandleTime) return fn();
+		
+		this.#checkAndSetTimers();
+		
+		const lastExecutionTime = this.#maxExecutionTime; // zone?
+		try {
+			if (overrideExecutionTime) this.#maxExecutionTime = overrideExecutionTime
+			return fn();
+		} finally {
+			this.#maxExecutionTime = lastExecutionTime;
+			const handleTime = hrtime.bigint() - this.#startHandleTime;
+			this.#longPoolAccum += handleTime;
+			this.#startHandleTime = 0n;
+		}
+	}
+	
+	handleIgnoreErrors = (fn: () => any, overrideExecutionTime?: bigint): void => {
+		try {
+			this.handle(fn, overrideExecutionTime);
+		} catch {}
+	}
+	
+	
+	#checkAndSetTimers = () => {
+		this.#startHandleTime = hrtime.bigint();
+		
+		// set new longStartHandleTime
+		if (this.#longStartHandleTime === 0n || this.#longStartHandleTime < this.#startHandleTime - this.#poolTime) {
+			this.#longStartHandleTime = this.#startHandleTime;
+			this.#longPoolAccum = 0n;
+		}
+	}
 	
 	onInterrupt = () => {
-		if (this.#interruptTimeout == null) {
-			this.#interruptTimeSum = 0n;
-			this.#interruptTimeout = setTimeout(() => {
-				this.#interruptTimeout = undefined;
-			}, 10);
+		// throw if no context;
+		if (!this.#startHandleTime) {
+			this.#startHandleTime = hrtime.bigint();
 		}
 		
-		if (this.#interruptImmediate == null) {
-			this.#interruptImmediate = setImmediate(() => {
-				this.#interruptImmediate = undefined;
-				this.#interruptTimeSum += hrtime.bigint() - this.#interruptTime;
-			});
-			this.#interruptTime = hrtime.bigint();
+		
+		const currentHandleTime = hrtime.bigint() - this.#startHandleTime;
+		
+		// throw on overdue;
+		if (currentHandleTime > this.#maxExecutionTime) {
+			return true;
 		}
-		const diff = hrtime.bigint() - this.#interruptTime;
-		if (diff > this.#maxExecutionTimeNs) return true;
-		return this.#interruptTimeSum > 10_000_000n / 5n;
 		
-		
-	}
-	
-	clear(){
-		this.#interruptImmediate = undefined;
-		this.#interruptTimeout = undefined;
+		// throw on overdue;
+		if (this.#longPoolAccum + currentHandleTime > this.#maxWorkTimeInPool){
+			return true;
+		}
 	}
 }

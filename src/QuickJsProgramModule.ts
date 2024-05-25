@@ -21,19 +21,20 @@ export class QuickJsProgramModule extends UsingDisposable {
 	}
 	
 	call(methodName: string, thisArg: unknown = undefined, ...args: unknown[]): unknown {
-		this.#interruptManager.clear();
 		return this.withModule(wrapper => wrapper.getProp(methodName).callAndDump(thisArg, ...args));
+		
 	}
 	
 	getProp(propName: string) {
-		this.#interruptManager.clear();
 		return this.withModule(wrapper => wrapper.getProp(propName).dump());
+		
 	}
 	
-	withModule<T>(wrapper: (wrapper: ShortLifeValueWrapper) => T extends ShortLifeContextWrapper ? "do not return wrapped value!" : T): T {
+	withModule<T>(wrapper: (wrapper: ShortLifeValueWrapper) => T extends ShortLifeContextWrapper ? "do not return wrapped value! call .dump()" : T): T {
 		return Scope.withScope(scope => {
-			this.#interruptManager.clear();
-			return wrapper(new ShortLifeValueWrapper(scope, this.#context, this.#exports, true));
+			return this.#interruptManager.handle(() => {
+				return wrapper(new ShortLifeValueWrapper(scope, this.#context, this.#interruptManager, this.#exports, true));
+			});
 		}) as T;
 	}
 	

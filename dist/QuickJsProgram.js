@@ -1,7 +1,7 @@
 import { Scope, UsingDisposable } from "quickjs-emscripten";
 import url from 'node:url';
 import { QuickJSImmediateManager, QuickJSIntervalManager, QuickJSTimeoutManager } from "./scope/TimeManagers.js";
-import { ShortLifeContextWrapper } from "./utils/wrapper.js";
+import { ShortLifeContextWrapper, init } from "./utils/wrapper.js";
 import { ConsoleManager } from "./scope/ConsoleManager.js";
 import { InterruptManager } from "./InterruptManager.js";
 import { QuickJsProgramModule } from "./QuickJsProgramModule.js";
@@ -12,7 +12,7 @@ export class QuickJsProgram extends UsingDisposable {
     #intervalManager = new QuickJSIntervalManager(5000);
     #timeoutManager = new QuickJSTimeoutManager(5000);
     #immediateManager = new QuickJSImmediateManager(5000);
-    #interruptManager = new InterruptManager(1000000n);
+    #interruptManager = new InterruptManager(1000000n, 100000000n, 20000000n);
     #ownedDisposableItems = new Set([
         this.#timeoutManager,
         this.#intervalManager,
@@ -24,9 +24,10 @@ export class QuickJsProgram extends UsingDisposable {
         this.#getSource = getSource;
         const context = this.#context = quickJS.newContext();
         context.runtime.setMemoryLimit(100000000);
-        this.#intervalManager.settleContext(context);
-        this.#timeoutManager.settleContext(context);
-        this.#immediateManager.settleContext(context);
+        init(context);
+        this.#intervalManager.settleContext(context, this.#interruptManager);
+        this.#timeoutManager.settleContext(context, this.#interruptManager);
+        this.#immediateManager.settleContext(context, this.#interruptManager);
         if (settings.consoleHandler) {
             const consoleManager = new ConsoleManager(settings.consoleHandler);
             this.#ownedDisposableItems.add(consoleManager);
@@ -50,7 +51,8 @@ export class QuickJsProgram extends UsingDisposable {
                 return this.#fixModuleContent(moduleName, res);
             throw new Error(`module not found: ${moduleName}`);
         }).finally(() => {
-            context.runtime.executePendingJobs();
+            const jobs = context.runtime.executePendingJobs();
+            jobs?.error?.dispose();
         });
     }
     #fixModuleContent(moduleName, source) {
@@ -85,7 +87,9 @@ export class QuickJsProgram extends UsingDisposable {
                 throw new Error(`module source not found: ${moduleName}`);
             src = requestedSource;
         }
-        const callResult = this.#context.evalCode(src, moduleName, { type: "module", strict: true, strip: true });
+        const callResult = this.#interruptManager.handle(() => {
+            return this.#context.evalCode(src, moduleName, { type: "module", strict: true, strip: true });
+        }, 50000000n);
         return this.#createModuleByCallResult(moduleName, callResult);
     }
     async createModuleAsync(moduleName, src, builtin) {
@@ -145,7 +149,7 @@ export class QuickJsProgram extends UsingDisposable {
     }
     withContext(handler) {
         return Scope.withScope(scope => {
-            return handler(new ShortLifeContextWrapper(scope, this.#context));
+            return handler(new ShortLifeContextWrapper(scope, this.#context, this.#interruptManager));
         });
     }
     get alive() {

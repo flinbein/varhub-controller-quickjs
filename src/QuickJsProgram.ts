@@ -8,7 +8,7 @@ import {
 } from "quickjs-emscripten"
 import url from 'node:url';
 import { QuickJSImmediateManager, QuickJSIntervalManager, QuickJSTimeoutManager } from "./scope/TimeManagers.js"
-import { ShortLifeContextWrapper } from "./utils/wrapper.js"
+import { ShortLifeContextWrapper, init } from "./utils/wrapper.js"
 import { ConsoleHandler, ConsoleManager } from "./scope/ConsoleManager.js";
 import { InterruptManager } from "./InterruptManager.js";
 import { QuickJsProgramModule } from "./QuickJsProgramModule.js";
@@ -30,7 +30,7 @@ export class QuickJsProgram extends UsingDisposable {
 	readonly #intervalManager = new QuickJSIntervalManager(5000);
 	readonly #timeoutManager = new QuickJSTimeoutManager(5000);
 	readonly #immediateManager = new QuickJSImmediateManager(5000);
-	readonly #interruptManager = new InterruptManager(1_000_000n);
+	readonly #interruptManager = new InterruptManager(1_000_000n, 100_000_000n, 20_000_000n);
 	readonly #ownedDisposableItems = new Set<UsingDisposable>([
 		this.#timeoutManager,
 		this.#intervalManager,
@@ -44,9 +44,10 @@ export class QuickJsProgram extends UsingDisposable {
 		const context = this.#context = quickJS.newContext();
 		context.runtime.setMemoryLimit(100000000);
 		
-		this.#intervalManager.settleContext(context);
-		this.#timeoutManager.settleContext(context);
-		this.#immediateManager.settleContext(context);
+		init(context);
+		this.#intervalManager.settleContext(context, this.#interruptManager);
+		this.#timeoutManager.settleContext(context, this.#interruptManager);
+		this.#immediateManager.settleContext(context, this.#interruptManager);
 		if (settings.consoleHandler) {
 			const consoleManager = new ConsoleManager(settings.consoleHandler);
 			this.#ownedDisposableItems.add(consoleManager);
@@ -70,7 +71,8 @@ export class QuickJsProgram extends UsingDisposable {
 			if (typeof res === "string") return this.#fixModuleContent(moduleName, res);
 			throw new Error(`module not found: ${moduleName}`);
 		}).finally(() => {
-			context.runtime.executePendingJobs();
+			const jobs = context.runtime.executePendingJobs();
+			jobs?.error?.dispose();
 		});
 	}
 	
@@ -105,11 +107,13 @@ export class QuickJsProgram extends UsingDisposable {
 			if (typeof requestedSource !== "string") throw new Error(`module source not found: ${moduleName}`);
 			src = requestedSource;
 		}
-		const callResult = this.#context.evalCode(
-			src,
-			moduleName,
-			{type: "module", strict: true, strip: true}
-		);
+		const callResult = this.#interruptManager.handle(() => {
+			return this.#context.evalCode(
+				src,
+				moduleName,
+				{type: "module", strict: true, strip: true}
+			)
+		}, 50_000_000n);
 		return this.#createModuleByCallResult(moduleName, callResult);
 	}
 	
@@ -173,7 +177,7 @@ export class QuickJsProgram extends UsingDisposable {
 	
 	withContext<T>(handler: (wrapper: ShortLifeContextWrapper) => T extends ShortLifeContextWrapper ? "do not return wrapped value!" : T): T {
 		return Scope.withScope(scope => {
-			return handler(new ShortLifeContextWrapper(scope, this.#context));
+			return handler(new ShortLifeContextWrapper(scope, this.#context, this.#interruptManager));
 		}) as T;
 	}
 	

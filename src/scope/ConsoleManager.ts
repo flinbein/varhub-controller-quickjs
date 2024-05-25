@@ -1,4 +1,5 @@
 import { QuickJSContext, QuickJSHandle, Scope, UsingDisposable } from "quickjs-emscripten"
+import { InterruptManager } from "../InterruptManager.js";
 
 export interface ConsoleHandler {
 	(level: "log" | "error" | "warn" | "info" | "debug", ...args: unknown[]): void

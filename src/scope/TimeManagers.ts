@@ -1,4 +1,5 @@
-import { QuickJSContext, QuickJSHandle, QuickJSRuntime, UsingDisposable } from "quickjs-emscripten"
+import { QuickJSContext, QuickJSHandle, UsingDisposable } from "quickjs-emscripten"
+import { InterruptManager } from "../InterruptManager.js";
 export class QuickJSIntervalManager extends UsingDisposable {
 	intervalId = 0;
 	#intervalMap: Map<number, [ReturnType<typeof setInterval>, ...UsingDisposable[]]> | null = new Map();
@@ -10,7 +11,7 @@ export class QuickJSIntervalManager extends UsingDisposable {
 		this.#maxIntervals = maxIntervals;
 	}
 	
-	setInterval(context: QuickJSContext, callbackVal: QuickJSHandle, thisVal: QuickJSHandle, timer: number, ...args: QuickJSHandle[]): number {
+	setInterval(context: QuickJSContext, interruptManager: InterruptManager, callbackVal: QuickJSHandle, thisVal: QuickJSHandle, timer: number, ...args: QuickJSHandle[]): number {
 		if (!this.#intervalMap) throw new Error("intervals disposed");
 		if (this.#intervalMap.size >= this.#maxIntervals) throw new Error("too many intervals");
 		
@@ -21,9 +22,12 @@ export class QuickJSIntervalManager extends UsingDisposable {
 		if (this.intervalId >= Number.MAX_SAFE_INTEGER) this.intervalId = 0;
 
 		const intervalValue = setInterval(() => {
-			const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
-			context.unwrapResult(callResult).dispose();
-			context.runtime.executePendingJobs();
+			interruptManager.handleIgnoreErrors(() => {
+				const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
+				const jobs = context.runtime.executePendingJobs();
+				jobs?.error?.dispose();
+				context.unwrapResult(callResult).dispose();
+			})
 		}, timer);
 
 		this.#intervalMap.set(intervalId, [intervalValue, callbackHandle, thisHandle, ...argHandles] as const);
@@ -59,11 +63,11 @@ export class QuickJSIntervalManager extends UsingDisposable {
 		this.#intervalMap = null;
 	}
 	
-	settleContext(context: QuickJSContext){
+	settleContext(context: QuickJSContext, interruptManager: InterruptManager){
 		const manager = this;
 		const setIntervalHandle = context.newFunction("setInterval", function(callbackArg, delayArg, ...args) {
 			const delayMs = context.getNumber(delayArg);
-			const intervalId = manager.setInterval(context, callbackArg, this, delayMs, ...args);
+			const intervalId = manager.setInterval(context, interruptManager, callbackArg, this, delayMs, ...args);
 			return context.newNumber(intervalId);
 		})
 		
@@ -89,7 +93,7 @@ export class QuickJSTimeoutManager extends UsingDisposable {
 		this.#maxTimeouts = maxTimeouts;
 	}
 	
-	setTimeout(context: QuickJSContext, callbackVal: QuickJSHandle, thisVal: QuickJSHandle, timer: number, ...args: QuickJSHandle[]): number {
+	setTimeout(context: QuickJSContext, interruptManager: InterruptManager, callbackVal: QuickJSHandle, thisVal: QuickJSHandle, timer: number, ...args: QuickJSHandle[]): number {
 		if (!this.#timeoutMap) throw new Error("timeouts disposed");
 		if (this.#timeoutMap.size >= this.#maxTimeouts) throw new Error("too many timeouts");
 		
@@ -100,13 +104,16 @@ export class QuickJSTimeoutManager extends UsingDisposable {
 		if (this.#timeoutId >= Number.MAX_SAFE_INTEGER) this.#timeoutId = 0;
 		
 		const timeoutValue = setTimeout(() => {
-			const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
-			this.#timeoutMap?.delete(timeoutId);
-			for (let disposable of [thisHandle, callbackHandle, ...argHandles]) {
-				disposable.dispose();
-			}
-			context.unwrapResult(callResult).dispose();
-			context.runtime.executePendingJobs();
+			interruptManager.handleIgnoreErrors(() => {
+				const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
+				this.#timeoutMap?.delete(timeoutId);
+				for (let disposable of [thisHandle, callbackHandle, ...argHandles]) {
+					disposable.dispose();
+				}
+				const jobs = context.runtime.executePendingJobs();
+				jobs?.error?.dispose();
+				context.unwrapResult(callResult).dispose();
+			})
 		}, timer);
 		
 		this.#timeoutMap.set(timeoutId, [timeoutValue, callbackHandle, thisHandle, ...argHandles] as const);
@@ -129,11 +136,11 @@ export class QuickJSTimeoutManager extends UsingDisposable {
 		return this.#timeoutMap != null;
 	}
 	
-	settleContext(context: QuickJSContext){
+	settleContext(context: QuickJSContext, interruptManager: InterruptManager){
 		const manager = this;
 		const setTimeoutHandle = context.newFunction("setTimeout", function(callbackArg, delayArg, ...args) {
 			const delayMs = context.getNumber(delayArg);
-			const timeoutId = manager.setTimeout(context, callbackArg, this, delayMs, ...args);
+			const timeoutId = manager.setTimeout(context, interruptManager, callbackArg, this, delayMs, ...args);
 			return context.newNumber(timeoutId);
 		})
 		
@@ -171,7 +178,7 @@ export class QuickJSImmediateManager extends UsingDisposable {
 		this.#maxImmediateItems = maxImmediateItems;
 	}
 	
-	setImmediate(context: QuickJSContext, callbackVal: QuickJSHandle, thisVal: QuickJSHandle, ...args: QuickJSHandle[]): number {
+	setImmediate(context: QuickJSContext, interruptManager: InterruptManager, callbackVal: QuickJSHandle, thisVal: QuickJSHandle, ...args: QuickJSHandle[]): number {
 		if (!this.#immediateMap) throw new Error("immediate disposed");
 		if (this.#immediateMap.size >= this.#maxImmediateItems) throw new Error("too many immediate");
 		
@@ -182,13 +189,16 @@ export class QuickJSImmediateManager extends UsingDisposable {
 		if (this.#immediateId >= Number.MAX_SAFE_INTEGER) this.#immediateId = 0;
 		
 		const immediateValue = setImmediate(() => {
-			const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
-			this.#immediateMap?.delete(timeoutId);
-			for (let disposable of [thisHandle, callbackHandle, ...argHandles]) {
-				disposable.dispose();
-			}
-			context.unwrapResult(callResult).dispose();
-			context.runtime.executePendingJobs();
+			interruptManager.handleIgnoreErrors(() => {
+				const callResult = context.callFunction(callbackHandle, thisHandle, ...argHandles);
+				this.#immediateMap?.delete(timeoutId);
+				for (let disposable of [thisHandle, callbackHandle, ...argHandles]) {
+					disposable.dispose();
+				}
+				const jobs = context.runtime.executePendingJobs();
+				jobs?.error?.dispose();
+				context.unwrapResult(callResult).dispose();
+			})
 		});
 		
 		this.#immediateMap.set(timeoutId, [immediateValue, callbackHandle, thisHandle, ...argHandles] as const);
@@ -212,10 +222,10 @@ export class QuickJSImmediateManager extends UsingDisposable {
 		return this.#immediateMap != null;
 	}
 	
-	settleContext(context: QuickJSContext){
+	settleContext(context: QuickJSContext, interruptManager: InterruptManager){
 		const manager = this;
 		const setImmediateHandle = context.newFunction("setImmediate", function(callbackArg, ...args) {
-			const timeoutId = manager.setImmediate(context, callbackArg, this, ...args);
+			const timeoutId = manager.setImmediate(context, interruptManager, callbackArg, this, ...args);
 			return context.newNumber(timeoutId);
 		})
 		

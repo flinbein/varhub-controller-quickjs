@@ -1,5 +1,10 @@
 import { Scope, UsingDisposable } from "quickjs-emscripten";
 import { Lifetime } from "quickjs-emscripten-core";
+export function init(context) {
+    getRecursiveDumperCreator(context);
+    getTypedArrayWrapper(context);
+    getStructureDumpSymbolHandle(context);
+}
 function wrap(scope, context, data) {
     const typedArrayWrap = getTypedArrayWrapper(context);
     const wrappedArray = typedArrayWrap(data);
@@ -177,26 +182,16 @@ function dumpPromisify(context, valueUnscoped) {
         return dump;
     });
 }
-export function callFunction(context, methodHandle, thisArg = undefined, ...args) {
-    return Scope.withScope((scope) => {
-        const wrapArg = wrap.bind(null, scope, context);
-        const typeOfMethod = context.typeof(methodHandle);
-        if (typeOfMethod !== "function") {
-            throw new Error(`not a function: ${typeOfMethod}`);
-        }
-        const thisArgHandle = wrapArg(thisArg);
-        const argsHandle = args.map(wrapArg);
-        return context.callFunction(methodHandle, thisArgHandle, ...argsHandle);
-    });
-}
 const handleMap = new WeakMap;
 export class ShortLifeContextWrapper extends UsingDisposable {
     #scope;
     #context;
-    constructor(scope, context) {
+    #interruptManager;
+    constructor(scope, context, interruptManager) {
         super();
         this.#context = context;
         this.#scope = scope;
+        this.#interruptManager = interruptManager;
     }
     newFunction(fn) {
         const context = this.#context;
@@ -206,9 +201,16 @@ export class ShortLifeContextWrapper extends UsingDisposable {
                 const apiResult = fn(...args);
                 if (apiResult instanceof Promise) {
                     const promiseHandle = context.newPromise();
-                    apiResult.then(v => Scope.withScope((scope) => promiseHandle.resolve(wrap(scope, context, v))), v => Scope.withScope((scope) => promiseHandle.reject(wrap(scope, context, v)))).finally(() => {
+                    apiResult.then(v => Scope.withScope((scope) => {
+                        promiseHandle.resolve(wrap(scope, context, v));
+                    }), v => Scope.withScope((scope) => {
+                        promiseHandle.reject(wrap(scope, context, v));
+                    })).finally(() => {
                         promiseHandle.dispose();
-                        context.runtime.executePendingJobs();
+                        this.#interruptManager.handle(() => {
+                            const jobs = context.runtime.executePendingJobs();
+                            jobs?.error?.dispose();
+                        });
                     });
                     return promiseHandle.handle;
                 }
@@ -226,10 +228,7 @@ export class ShortLifeContextWrapper extends UsingDisposable {
                 return { error: result };
             }
         });
-        return new ShortLifeValueWrapper(this.#scope, context, fnHandle);
-    }
-    wrap(jsValue) {
-        return new ShortLifeValueWrapper(this.#scope, this.#context, wrap(this.#scope, this.#context, jsValue));
+        return new ShortLifeValueWrapper(this.#scope, context, this.#interruptManager, fnHandle);
     }
     get alive() {
         return this.#scope.alive;
@@ -242,11 +241,13 @@ export class ShortLifeValueWrapper extends ShortLifeContextWrapper {
     #scope;
     #context;
     #handle;
-    constructor(scope, context, handle, keep) {
-        super(scope, context);
+    #interruptManager;
+    constructor(scope, context, interruptManager, handle, keep) {
+        super(scope, context, interruptManager);
         this.#context = context;
         this.#scope = scope;
         this.#handle = handle;
+        this.#interruptManager = interruptManager;
         if (!keep)
             scope.manage(handle);
         handleMap.set(this, handle);
@@ -264,7 +265,7 @@ export class ShortLifeValueWrapper extends ShortLifeContextWrapper {
     getProp(key) {
         const ctxKey = (key instanceof ShortLifeValueWrapper) ? key.#handle : key;
         const handle = this.#context.getProp(this.#handle, ctxKey);
-        return new ShortLifeValueWrapper(this.#scope, this.#context, handle);
+        return new ShortLifeValueWrapper(this.#scope, this.#context, this.#interruptManager, handle);
     }
     callMethod(key, ...args) {
         const fn = this.getProp(key);
@@ -287,8 +288,8 @@ export class ShortLifeValueWrapper extends ShortLifeContextWrapper {
             const argHandles = args.map(wrap.bind(undefined, scope, this.#context));
             const callResult = this.#context.callFunction(this.#handle, thisHandle, ...argHandles);
             if (!("value" in callResult))
-                throw new ShortLifeValueWrapper(this.#scope, this.#context, callResult.error);
-            return new ShortLifeValueWrapper(this.#scope, this.#context, callResult.value);
+                throw this.#next(callResult.error);
+            return this.#next(callResult.value);
         });
     }
     callAndDump(thisArg = undefined, ...args) {
@@ -310,12 +311,15 @@ export class ShortLifeValueWrapper extends ShortLifeContextWrapper {
     dispose() {
         this.#scope.dispose();
     }
+    #next(handle) {
+        return new ShortLifeValueWrapper(this.#scope, this.#context, this.#interruptManager, handle);
+    }
 }
 const _typedArrayDump = Symbol();
 function getRecursiveDumperCreator(context) {
     if (_typedArrayDump in context)
         return context[_typedArrayDump];
-    const unwrapCodeResult = context.evalCode(unwrapCode, "", { type: "global", strip: true, strict: true });
+    const unwrapCodeResult = context.evalCode(unwrapCode, "", { type: "global", strip: false, strict: true });
     const unwrapFnHandle = context.unwrapResult(unwrapCodeResult);
     return context[_typedArrayDump] = function () {
         const uwResult = context.callFunction(unwrapFnHandle, context.undefined);
@@ -327,7 +331,7 @@ const _typedArrayWrap = Symbol();
 function getTypedArrayWrapper(context) {
     if (_typedArrayWrap in context)
         return context[_typedArrayWrap];
-    const unwrapCodeResult = context.evalCode(wrapArrayCode, "", { type: "global", strip: true, strict: true });
+    const unwrapCodeResult = context.evalCode(wrapArrayCode, "", { type: "global", strip: false, strict: true });
     const wrapFnHandle = context.unwrapResult(unwrapCodeResult);
     return context[_typedArrayWrap] = function (value) {
         if (value instanceof ArrayBuffer)
