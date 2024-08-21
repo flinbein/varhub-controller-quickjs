@@ -26,6 +26,7 @@ export class RoomModuleHelper {
         for (const eventName of ["join", "leave", "online", "offline"]) {
             playerController.on(eventName, (player) => {
                 innerModule.call("emit", undefined, eventName, player.id);
+                program.executePendingJobs();
             });
         }
         room.prependListener("connectionJoin", (connection) => {

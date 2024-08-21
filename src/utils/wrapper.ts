@@ -157,7 +157,7 @@ function dumpPromisify(context: QuickJSContext, valueUnscoped: QuickJSHandle): u
 		const error = dumpPromisify(context, promiseState.error);
 		return Promise.reject(error);
 	}
-	return context.resolvePromise(valueUnscoped).then(resolvedResult => {
+	const promiseResolver = context.resolvePromise(valueUnscoped).then(resolvedResult => {
 		if (!("value" in resolvedResult)) {
 			const innerPromiseState = context.getPromiseState(resolvedResult.error);
 			if (innerPromiseState.type !== "fulfilled" || !innerPromiseState.notAPromise) {
@@ -172,6 +172,8 @@ function dumpPromisify(context: QuickJSContext, valueUnscoped: QuickJSHandle): u
 		if (valueUnscoped.alive) valueUnscoped.dispose();
 		return dump;
 	});
+	context.runtime.executePendingJobs();
+	return promiseResolver;
 }
 
 

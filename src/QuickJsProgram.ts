@@ -185,6 +185,10 @@ export class QuickJsProgram extends UsingDisposable {
 		return this.#alive;
 	}
 	
+	executePendingJobs(count = -1){
+		void this.#context.runtime.executePendingJobs(count)
+	}
+	
 	dispose() {
 		this.#alive = false;
 		for (let module of this.#loadedModules.values()) if (module.alive) try {
