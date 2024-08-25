@@ -1,5 +1,5 @@
 import { default as assert } from "node:assert";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import { QuickJsProgram, QuickJsProgramSource } from "../src/QuickJsProgram.js"
 
 import { getQuickJS } from "quickjs-emscripten"
@@ -524,4 +524,33 @@ describe("test program", async () => {
 			program.createModule("index.js");
 		}, "throws in module");
 	});
+	
+	it("execute pending", async () => {
+		const bridge = mock.fn();
+		const program = new QuickJsProgram(quickJS, sources({
+			"index.js": /* language=JavaScript */ `
+                export function test(){
+                    void test2();
+                    return 1;
+                }
+
+                async function test2(){
+                    bridge("test-2");
+                    await test3();
+                    bridge("test-2-done");
+                }
+
+                async function test3(){
+                    bridge("test-3");
+                    return 0;
+                }
+			`
+		}));
+		program.withContext(wrapper => {
+			wrapper.getGlobal().setProp("bridge", wrapper.newFunction(bridge));
+		})
+		const module = program.createModule("index.js");
+		module.call("test", undefined);
+		assert.deepEqual(bridge.mock.callCount(), 3);
+	})
 });

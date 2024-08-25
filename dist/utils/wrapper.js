@@ -165,7 +165,7 @@ function dumpPromisify(context, valueUnscoped) {
         const error = dumpPromisify(context, promiseState.error);
         return Promise.reject(error);
     }
-    const promiseResolver = context.resolvePromise(valueUnscoped).then(resolvedResult => {
+    return context.resolvePromise(valueUnscoped).then(resolvedResult => {
         if (!("value" in resolvedResult)) {
             const innerPromiseState = context.getPromiseState(resolvedResult.error);
             if (innerPromiseState.type !== "fulfilled" || !innerPromiseState.notAPromise) {
@@ -181,8 +181,6 @@ function dumpPromisify(context, valueUnscoped) {
             valueUnscoped.dispose();
         return dump;
     });
-    context.runtime.executePendingJobs();
-    return promiseResolver;
 }
 const handleMap = new WeakMap;
 export class ShortLifeContextWrapper extends UsingDisposable {
@@ -231,6 +229,9 @@ export class ShortLifeContextWrapper extends UsingDisposable {
             }
         });
         return new ShortLifeValueWrapper(this.#scope, context, this.#interruptManager, fnHandle);
+    }
+    getGlobal() {
+        return new ShortLifeValueWrapper(this.#scope, this.#context, this.#interruptManager, this.#context.global);
     }
     get alive() {
         return this.#scope.alive;
@@ -289,6 +290,7 @@ export class ShortLifeValueWrapper extends ShortLifeContextWrapper {
             const thisHandle = wrap(scope, this.#context, thisArg);
             const argHandles = args.map(wrap.bind(undefined, scope, this.#context));
             const callResult = this.#context.callFunction(this.#handle, thisHandle, ...argHandles);
+            this.#context.runtime.executePendingJobs();
             if (!("value" in callResult))
                 throw this.#next(callResult.error);
             return this.#next(callResult.value);
