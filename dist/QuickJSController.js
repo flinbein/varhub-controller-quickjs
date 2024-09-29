@@ -111,3 +111,4 @@ export class QuickJSController extends TypedEventEmitter {
         this.#room?.[Symbol.dispose]();
     }
 }
+//# sourceMappingURL=QuickJSController.js.map

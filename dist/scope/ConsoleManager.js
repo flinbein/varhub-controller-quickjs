@@ -28,3 +28,4 @@ export class ConsoleManager extends UsingDisposable {
         this.#console = null;
     }
 }
+//# sourceMappingURL=ConsoleManager.js.map

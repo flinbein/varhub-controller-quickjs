@@ -1,6 +1,6 @@
 {
   "name": "@flinbein/varhub-controller-quickjs",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "node": ">=20.0.0",
   "type": "module",
   "types": "./src/index.ts",
@@ -8,17 +8,17 @@
   "scripts": {
     "build": "tsc",
     "test": "node --import=./test/register.js --test --test-reporter spec ./test/**/*.test.ts",
-    "prepare": "husky install"
+    "prepare": "husky"
   },
   "dependencies": {
-    "quickjs-emscripten": "^0.29.1"
+    "quickjs-emscripten": "^0.31.0"
   },
   "devDependencies": {
-    "@flinbein/varhub": "git+https://github.com/flinbein/varhub#1.4.0",
-    "@jitl/quickjs-ng-wasmfile-release-asyncify": "^0.29.1",
-    "husky": "^9.0.11",
+    "@flinbein/varhub": "git+https://github.com/flinbein/varhub#1.4.2",
+    "@jitl/quickjs-ng-wasmfile-release-asyncify": "^0.31.0",
+    "husky": "^9.1.6",
     "ts-jest": "^29.1.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.6.2"
   }
 }

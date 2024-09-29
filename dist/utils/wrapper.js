@@ -1,5 +1,4 @@
 import { Scope, UsingDisposable } from "quickjs-emscripten";
-import { Lifetime } from "quickjs-emscripten-core";
 export function init(context) {
     getRecursiveDumperCreator(context);
     getTypedArrayWrapper(context);
@@ -10,7 +9,7 @@ function wrap(scope, context, data) {
     const wrappedArray = typedArrayWrap(data);
     if (wrappedArray)
         return scope.manage(wrappedArray);
-    if (data instanceof Lifetime && data.owner === context.runtime)
+    if (data && typeof data === "object" && "owner" in data && data.owner === context.runtime)
         return data;
     const innerHandle = handleMap.get(data);
     if (innerHandle)
@@ -403,3 +402,4 @@ function getStructureDumpSymbolHandle(context) {
         return context[_StructureDumpSymbolHandleKey];
     return context[_StructureDumpSymbolHandleKey] = context.newSymbolFor("varhub.structure");
 }
+//# sourceMappingURL=wrapper.js.map

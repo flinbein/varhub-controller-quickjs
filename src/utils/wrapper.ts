@@ -13,8 +13,8 @@ function wrap(scope: Scope, context: QuickJSContext, data: unknown): QuickJSHand
 	const wrappedArray = typedArrayWrap(data);
 	if (wrappedArray) return scope.manage(wrappedArray);
 	
-	if (data instanceof Lifetime && data.owner === context.runtime) return data;
-	const innerHandle = handleMap.get(data)
+	if (data && typeof data === "object" && "owner" in data && data.owner === context.runtime) return data as any;
+	const innerHandle = handleMap.get(data);
 	if (innerHandle) return innerHandle;
 	
 	if (data === undefined) return scope.manage(context.undefined);

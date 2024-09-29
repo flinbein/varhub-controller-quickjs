@@ -6,7 +6,7 @@ export class RoomModuleHelper {
         this.#playerController = playerController;
         const innerModule = program.createModule(`${moduleName}#inner`, roomInnerSource);
         innerModule.withModule((wrapper) => {
-            void wrapper.callMethod("set", {
+            void wrapper.getProp("set").call(undefined, {
                 destroyRoom: wrapper.newFunction(this.destroyRoom.bind(this)),
                 getRoomMessage: wrapper.newFunction(this.getRoomMessage.bind(this)),
                 setRoomMessage: wrapper.newFunction(this.setRoomMessage.bind(this)),
@@ -170,3 +170,4 @@ const roomInnerSource = `
     export const e = new EventEmitter();
     export const emit = (...args) => {e.emit(...args)}
 `;
+//# sourceMappingURL=RoomModuleHelper.js.map

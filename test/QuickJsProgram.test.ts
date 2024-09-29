@@ -21,7 +21,7 @@ function sourcesWithApi(
 			const innerModuleCode = `export let h; export let f = x => h = x`
 			const innerModule = program.createModule(file + "#inner", innerModuleCode)
 			innerModule.withModule(wrapper => {
-				wrapper.callMethod("f", wrapper.newFunction(apiConstructor()))
+				wrapper.getProp("f").call(undefined, wrapper.newFunction(apiConstructor()))
 			});
 			return `import {h} from "#inner"; export default h`;
 		}

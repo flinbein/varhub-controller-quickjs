@@ -15,7 +15,7 @@ export class PerformanceModuleHelper {
 			true
 		);
 		innerModule.withModule((wrapper) => {
-			void wrapper.callMethod("$set", wrapper.newFunction(this.getNow));
+			void wrapper.getProp("$set").call(undefined, wrapper.newFunction(this.getNow));
 		});
 		/* language=javascript */
 		program.createModule(moduleName, `export { now } from "#inner";`, true);

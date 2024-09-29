@@ -37,3 +37,4 @@ export class QuickJsProgramModule extends UsingDisposable {
         this.#exports.dispose();
     }
 }
+//# sourceMappingURL=QuickJsProgramModule.js.map

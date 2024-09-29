@@ -10,7 +10,7 @@ export class RoomModuleHelper {
 		this.#playerController = playerController;
 		const innerModule = program.createModule(`${moduleName}#inner`, roomInnerSource);
 		innerModule.withModule((wrapper) => {
-			void wrapper.callMethod("set", {
+			void wrapper.getProp("set").call(undefined, {
 				destroyRoom: wrapper.newFunction(this.destroyRoom.bind(this)),
 				getRoomMessage: wrapper.newFunction(this.getRoomMessage.bind(this)),
 				setRoomMessage: wrapper.newFunction(this.setRoomMessage.bind(this)),

@@ -174,3 +174,4 @@ export class QuickJsProgram extends UsingDisposable {
                 catch { }
     }
 }
+//# sourceMappingURL=QuickJsProgram.js.map

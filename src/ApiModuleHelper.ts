@@ -18,7 +18,7 @@ export class ApiModuleHelper {
 			`export let $; export const set = a => {$ = a}`
 		);
 		innerModule.withModule(wrapper => {
-			wrapper.callMethod("set", wrapper.newFunction(this.callApi));
+			wrapper.getProp("set").call(undefined, wrapper.newFunction(this.callApi));
 		});
 	}
 	

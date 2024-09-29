@@ -232,3 +232,4 @@ export class QuickJSImmediateManager extends UsingDisposable {
         this.#immediateMap = null;
     }
 }
+//# sourceMappingURL=TimeManagers.js.map

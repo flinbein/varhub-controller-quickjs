@@ -33,3 +33,4 @@ export default /* language=JavaScript */ `export class EventEmitter {
 		return true;
 	}
 }`;
+//# sourceMappingURL=EventEmitterSource.js.map
