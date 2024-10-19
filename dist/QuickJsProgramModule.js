@@ -17,6 +17,9 @@ export class QuickJsProgramModule extends UsingDisposable {
     call(methodName, thisArg = undefined, ...args) {
         return this.withModule(wrapper => wrapper.getProp(methodName).callAndDump(thisArg, ...args));
     }
+    callMethodIgnored(methodName, thisArg = undefined, ...args) {
+        this.withModule(wrapper => void wrapper.getProp(methodName).call(thisArg, ...args));
+    }
     getProp(propName) {
         return this.withModule(wrapper => wrapper.getProp(propName).dump());
     }

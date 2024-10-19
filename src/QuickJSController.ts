@@ -1,12 +1,13 @@
 import type { QuickJSAsyncWASMModule, QuickJSWASMModule } from "quickjs-emscripten";
 import type { ConsoleHandler } from "./scope/ConsoleManager.js";
-import type { QuickJsProgramModule } from "./QuickJsProgramModule.js";
-import { PlayerController, RPCController, type Room, type Connection, ApiHelperController, TypedEventEmitter } from "@flinbein/varhub";
+import { type Room, ApiHelperController, TypedEventEmitter } from "@flinbein/varhub";
 import { QuickJsProgram } from "./QuickJsProgram.js";
 import { RoomModuleHelper } from "./RoomModuleHelper.js";
 import { ApiModuleHelper } from "./ApiModuleHelper.js";
-import eventEmitterSource from "./EventEmitterSource.js";
 import { PerformanceModuleHelper } from "./PerformanceModuleHelper.js";
+import eventEmitterSource from "./innerSource/EventEmitterSource.js";
+import rpcSource from "./innerSource/RPCSource.js";
+import playersSource from "./innerSource/PlayersSource.js";
 
 
 export interface QuickJSControllerCode {
@@ -16,8 +17,6 @@ export interface QuickJSControllerCode {
 
 export interface ControllerOptions {
 	apiHelperController?: ApiHelperController,
-	playerController?: PlayerController;
-	rpcController?: RPCController;
 	config?: {};
 }
 
@@ -25,15 +24,18 @@ export type QuickJSControllerEvents = {
 	console: Parameters<ConsoleHandler>;
 }
 
+const baseModules: Partial<Record<string, string>> = {
+	"varhub:events": eventEmitterSource,
+	"varhub:rpc": rpcSource,
+	"varhub:players": playersSource,
+}
+
 export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents> implements Disposable  {
 	readonly #quickJS: QuickJSWASMModule | QuickJSAsyncWASMModule;
 	readonly #room: Room;
 	readonly #apiHelperController: ApiHelperController | undefined;
-	readonly #rpcController: RPCController;
 	#apiModuleHelper: ApiModuleHelper | undefined;
-	readonly #playerController: PlayerController;
 	readonly #program: QuickJsProgram;
-	#mainModule: QuickJsProgramModule | undefined = undefined;
 	readonly #mainModuleName: string;
 	readonly #source: Record<string, string>;
 	readonly #configJson: string;
@@ -45,8 +47,6 @@ export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents
 			this.#quickJS = quickJS;
 			room.on("destroy", this[Symbol.dispose].bind(this));
 			this.#apiHelperController = options.apiHelperController;
-			this.#rpcController = options.rpcController ?? new RPCController(room);
-			this.#playerController = options.playerController ?? new PlayerController(room);
 			this.#source = {...code.source};
 			this.#configJson = JSON.stringify(options.config) ?? "undefined";
 			
@@ -65,23 +65,26 @@ export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents
 	#started = false;
 	start(): this{
 		this.#startModules();
-		this.#mainModule = this.#program.createModule(this.#mainModuleName, this.#source[this.#mainModuleName]);
+		const module = this.#program.createModule(this.#mainModuleName, this.#source[this.#mainModuleName]);
+		const keys = module.withModule(val => val.getKeys());
+		if (keys && keys.length > 0) this.#program.startRpc(module)
 		return this;
 	}
 	
 	async startAsync(): Promise<this> {
 		this.#startModules();
-		this.#mainModule = await this.#program.createModuleAsync(this.#mainModuleName, this.#source[this.#mainModuleName]);
+		const module = await this.#program.createModuleAsync(this.#mainModuleName, this.#source[this.#mainModuleName]);
+		const keys = module.withModule(val => val.getKeys());
+		if (keys && keys.length > 0) this.#program.startRpc(module)
 		return this;
 	}
 	
 	#startModules(){
 		if (this.#started) throw new Error("already starting");
 		this.#started = true;
-		new RoomModuleHelper(this.#room, this.#playerController, this.#program, "varhub:room");
+		new RoomModuleHelper(this.#room, this.#program, "varhub:room");
 		new PerformanceModuleHelper(this.#program, "varhub:performance");
 		this.#apiModuleHelper = new ApiModuleHelper(this.#apiHelperController, this.#program, "varhub:api/");
-		this.#rpcController.addHandler(this.#rpcHandler);
 	}
 	
 	#consoleHandler: ConsoleHandler = (level, ...args: any[]) => {
@@ -92,20 +95,9 @@ export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents
 		return this.#room;
 	}
 	
-	#rpcHandler = (connection: Connection, methodName: unknown, ...args: unknown[]) => {
-		if (typeof methodName !== "string") return;
-		const type = this.#mainModule?.getType(methodName);
-		if (type === "function") return () => {
-			const player = this.#playerController.getPlayerOfConnection(connection);
-			const playerId = player ? this.#playerController.getPlayerId(player) : null;
-			if (playerId == null) throw new Error(`no player`);
-			return this.#mainModule?.call(methodName, {player: playerId, connection: connection.id}, ...args);
-		}
-	}
-	
 	#getSource(file: string, program: QuickJsProgram): string | void | Promise<string|void> {
 		if (file === "varhub:config") return `export default ${this.#configJson}`;
-		if (file === "varhub:events") return eventEmitterSource;
+		if (file in baseModules) return baseModules[file];
 		const possibleApiModuleName = this.#apiModuleHelper?.getPossibleApiModuleName(file);
 		if (possibleApiModuleName != null) return this.#apiModuleHelper?.createApiSource(possibleApiModuleName, program);
 		if (file in this.#source) return this.#source[file];
@@ -131,7 +123,6 @@ export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents
 	
 	[Symbol.dispose](){
 		this.#program?.dispose();
-		this.#rpcController.removeHandler(this.#rpcHandler)
 		this.#room?.[Symbol.dispose]();
 	}
 }

@@ -22,12 +22,14 @@ export class QuickJsProgramModule extends UsingDisposable {
 	
 	call(methodName: string, thisArg: unknown = undefined, ...args: unknown[]): unknown {
 		return this.withModule(wrapper => wrapper.getProp(methodName).callAndDump(thisArg, ...args));
-		
+	}
+	
+	callMethodIgnored(methodName: string, thisArg: unknown = undefined, ...args: unknown[]): void {
+		this.withModule(wrapper => void wrapper.getProp(methodName).call(thisArg, ...args));
 	}
 	
 	getProp(propName: string) {
 		return this.withModule(wrapper => wrapper.getProp(propName).dump());
-		
 	}
 	
 	withModule<T>(wrapper: (wrapper: ShortLifeValueWrapper) => T extends ShortLifeContextWrapper ? "do not return wrapped value! call .dump()" : T): T {

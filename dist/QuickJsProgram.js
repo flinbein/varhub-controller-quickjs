@@ -139,6 +139,20 @@ export class QuickJsProgram extends UsingDisposable {
             return context.dump(scope.manage(evalHandle.error));
         });
     }
+    startRpc(targetModule) {
+        const rpcModule = this.#loadedModules.get("varhub:rpc") ?? this.createModule("varhub:rpc");
+        const roomModule = this.#loadedModules.get("varhub:room") ?? this.createModule("varhub:room");
+        rpcModule.withModule(rpcModuleWrapper => {
+            const rpcClassWrapper = rpcModuleWrapper.getProp("default");
+            return targetModule.withModule(targetModuleWrapper => {
+                const rpcWrapper = rpcClassWrapper.new(targetModuleWrapper);
+                return roomModule.withModule(roomModuleWrapper => {
+                    const roomWrapper = roomModuleWrapper.getProp("default");
+                    rpcClassWrapper.callMethod("start", rpcWrapper, roomWrapper, "$rpc");
+                });
+            });
+        });
+    }
     setBuiltinModuleName(moduleName, builtin) {
         if (builtin) {
             this.#builtinModuleNames.add(moduleName);

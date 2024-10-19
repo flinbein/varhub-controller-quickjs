@@ -1,52 +1,45 @@
-import type { Connection, PlayerController, Room } from "@flinbein/varhub";
+import type { Connection, Room } from "@flinbein/varhub";
 import type { QuickJsProgram } from "./QuickJsProgram.js";
+import { roomInnerSource, roomSource } from "./innerSource/RoomSource.js";
 
 export class RoomModuleHelper {
 	readonly #room: Room;
-	readonly #playerController: PlayerController;
 	
-	constructor(room: Room, playerController: PlayerController, program: QuickJsProgram, moduleName: string) {
+	constructor(room: Room, program: QuickJsProgram, moduleName: string) {
 		this.#room = room;
-		this.#playerController = playerController;
 		const innerModule = program.createModule(`${moduleName}#inner`, roomInnerSource);
 		innerModule.withModule((wrapper) => {
 			void wrapper.getProp("set").call(undefined, {
-				destroyRoom: wrapper.newFunction(this.destroyRoom.bind(this)),
+				destroy: wrapper.newFunction(this.destroy.bind(this)),
 				getRoomMessage: wrapper.newFunction(this.getRoomMessage.bind(this)),
 				setRoomMessage: wrapper.newFunction(this.setRoomMessage.bind(this)),
-				getRoomClosed: wrapper.newFunction(this.getRoomClosed.bind(this)),
-				setRoomClosed: wrapper.newFunction(this.setRoomClosed.bind(this)),
-				kickPlayer: wrapper.newFunction(this.kick.bind(this)),
+				kick: wrapper.newFunction(this.kick.bind(this)),
+				open: wrapper.newFunction(this.open.bind(this)),
 				broadcast: wrapper.newFunction(this.broadcast.bind(this)),
-				getPlayerData: wrapper.newFunction(this.getPlayerData.bind(this)),
-				getPlayerOnline: wrapper.newFunction(this.getPlayerOnline.bind(this)),
-				getPlayers: wrapper.newFunction(this.getPlayers.bind(this)),
-				sendEventToPlayer: wrapper.newFunction(this.sendEvent.bind(this)),
+				send: wrapper.newFunction(this.send.bind(this)),
 				isOnline: wrapper.newFunction(this.isOnline.bind(this)),
-				getPlayerConnections: wrapper.newFunction(this.getPlayerConnections.bind(this)),
 			});
 		});
 		program.createModule(moduleName, roomSource, true);
 		
-		for (const eventName of ["join", "leave", "online", "offline"] as const) {
-			playerController.on(eventName, (player) => {
-				innerModule.call("emit", undefined, eventName, player.id);
-				program.executePendingJobs();
-			});
-		}
-		
-		room.prependListener("connectionJoin", (connection) => {
-			const player = playerController.getPlayerOfConnection(connection);
-			innerModule.call("emit", undefined, "connectionJoin", player?.id, connection.id);
+		this.#room.prependListener("connectionJoin", (connection) => {
+			innerModule.callMethodIgnored("onJoin", undefined, connection.id);
 		});
 		
-		room.prependListener("connectionClosed", (connection, online, reason) => {
-			const player = playerController.getPlayerOfConnection(connection);
-			innerModule.call("emit", undefined, "connectionClosed", player?.id, connection.id, reason);
+		this.#room.prependListener("connectionClosed", (connection, wasOnline, reason) => {
+			innerModule.callMethodIgnored("onClose", undefined, connection.id, wasOnline, reason);
+		});
+		
+		this.#room.prependListener("connectionEnter", (connection, ...args) => {
+			innerModule.callMethodIgnored("onEnter", undefined, connection.id, ...args);
+		});
+		
+		this.#room.prependListener("connectionMessage", (connection, ...args) => {
+			innerModule.call("onMessage", undefined, connection.id, ...args);
 		});
 	}
 	
-	destroyRoom(){
+	destroy(){
 		this.#room.destroy();
 	}
 	setRoomMessage(message: unknown){
@@ -55,69 +48,32 @@ export class RoomModuleHelper {
 	getRoomMessage(){
 		return this.#room.publicMessage
 	}
-	setRoomClosed(closed?: unknown){
-		if (closed != null) this.#playerController.closed = Boolean(closed);
-	}
-	getRoomClosed(){
-		return this.#playerController.closed;
-	}
-	getPlayerConnections(playerId?: unknown){
-		const player = this.#playerController.getPlayerById(String(playerId));
-		const connections = player?.getConnections();
-		if (!connections) return undefined;
-		return [...connections].map(({id}) => id);
-	}
 	kick(nameOrId?: unknown, reason?: unknown){
-		if (typeof nameOrId === "string") {
-			const player = this.#playerController.getPlayerById(String(nameOrId));
-			if (!player) return false;
-			return this.#playerController.kick(player, reason == null ? reason : String(reason));
-		} else if (typeof nameOrId === "number") {
-			const connection = this.#getConnection(nameOrId);
-			if (!connection) return false;
-			connection.leave(reason == null ? null : String(reason));
-			return true;
-		}
+		const connection = this.#getConnection(Number(nameOrId));
+		if (!connection) return false;
+		connection.leave(reason == null ? null : String(reason));
+		return true;
 	}
-	getPlayerData(name?: unknown){
-		const player = this.#playerController.getPlayerById(String(name));
-		if (!player) return undefined;
-		return player.config;
-	}
-	getPlayerOnline(name?: unknown){
-		const player = this.#playerController.getPlayerById(String(name));
-		if (!player) return undefined;
-		return player.online;
-	}
-	getPlayers(){
-		return Array.from(this.#playerController.getPlayers().keys());
+	open(nameOrId?: unknown){
+		const connection = this.#getConnection(Number(nameOrId));
+		if (!connection) return false;
+		return this.#room.join(connection);
 	}
 	broadcast(...args: unknown[]){
-		this.#playerController.broadcastEvent("$rpcEvent", ...args);
-	}
-	sendEvent(nameOrId?: unknown, ...args: unknown[]){
-		if (typeof nameOrId === "string") {
-			const player = this.#playerController.getPlayerById(String(nameOrId));
-			if (!player) return false;
-			if (!player.online) return false
-			player.sendEvent("$rpcEvent", ...args);
-			return true;
-		} else if (typeof nameOrId === "number") {
-			const connection = this.#getConnection(nameOrId);
-			if (!connection) return false;
-			connection.sendEvent("$rpcEvent", ...args);
-			return true;
+		for (let con of this.#room.getJoinedConnections()) {
+			con.sendEvent(...args);
 		}
+	}
+	send(nameOrId?: unknown, ...args: unknown[]){
+		const connection = this.#getConnection(Number(nameOrId));
+		if (!connection) return false;
+		connection.sendEvent(...args);
+		return true;
 	}
 	isOnline(nameOrId?: unknown){
-		if (typeof nameOrId === "string") {
-			const player = this.#playerController.getPlayerById(String(nameOrId));
-			return player?.online ?? false
-		} else if (typeof nameOrId === "number") {
-			const connection = this.#getConnection(nameOrId);
-			if (!connection) return false;
-			return connection.status === "joined";
-		}
+		const connection = this.#getConnection(Number(nameOrId));
+		if (!connection) return false;
+		return connection.status === "joined";
 	}
 	#getConnection(connectionId: number): Connection | undefined {
 		let connection = this.#room.getJoinedConnections().find(({id}) => id === connectionId);
@@ -125,44 +81,3 @@ export class RoomModuleHelper {
 		return connection
 	}
 }
-
-// language=JavaScript
-const roomSource = `
-	import {$, e} from "#inner";
-	export default Object.freeze({
-        get message(){
-            return $.getRoomMessage();
-        },
-        set message(message){
-            $.setRoomMessage(message);
-        },
-        get closed(){
-            return $.getRoomClosed();
-        },
-        set closed(v){
-            $.setRoomClosed(v);
-        },
-        destroy: $.destroyRoom,
-        isPlayerOnline: (name) => $.getPlayerOnline(name),
-        isOnline: (name) => $.isOnline(name),
-        hasPlayer: (name) => $.getPlayerOnline(name) != null,
-        kick: $.kickPlayer,
-        send: $.sendEventToPlayer,
-        broadcast: $.broadcast,
-        getPlayerData: $.getPlayerData,
-        getPlayers: $.getPlayers,
-        getPlayerConnections: $.getPlayerConnections,
-		on: e.on.bind(e),
-        once: e.once.bind(e),
-        off: e.off.bind(e)
-	})
-`;
-
-// language=JavaScript
-const roomInnerSource = `
-	import { EventEmitter } from "varhub:events";
-	export let $;
-    export const set = a => {$ = a}
-    export const e = new EventEmitter();
-    export const emit = (...args) => {e.emit(...args)}
-`

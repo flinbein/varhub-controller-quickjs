@@ -257,6 +257,22 @@ export class ShortLifeValueWrapper extends ShortLifeContextWrapper {
     getType() {
         return this.#context.typeof(this.#handle);
     }
+    getKeys() {
+        const getKeysResult = this.#context.evalCode("((O)=>(v)=>O.keys(v))(Object)", "", { type: "global", strip: true, strict: true });
+        const getKeysHandle = this.#context.unwrapResult(getKeysResult);
+        const keysResult = this.#context.callFunction(getKeysHandle, this.#context.undefined, this.#handle);
+        getKeysHandle.dispose();
+        const keysHandle = this.#context.unwrapResult(keysResult);
+        const result = this.#context.dump(keysHandle);
+        keysHandle.dispose();
+        return result;
+    }
+    new(...args) {
+        const callConstructorResult = this.#context.evalCode("(C,...a)=>new C(...a)", "", { type: "global", strip: true, strict: true });
+        const callConstructorHandle = this.#context.unwrapResult(callConstructorResult);
+        const callConstructorWrapper = new ShortLifeValueWrapper(this.#scope, this.#context, this.#interruptManager, callConstructorHandle);
+        return callConstructorWrapper.call(undefined, this.#handle, ...args);
+    }
     isPromise() {
         const promiseState = this.#context.getPromiseState(this.#handle);
         return (promiseState.type !== "fulfilled" || !promiseState.notAPromise);
