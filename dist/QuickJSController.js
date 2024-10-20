@@ -53,7 +53,7 @@ export class QuickJSController extends TypedEventEmitter {
         const module = await this.#program.createModuleAsync(this.#mainModuleName, this.#source[this.#mainModuleName]);
         const keys = module.withModule(val => val.getKeys());
         if (keys && keys.length > 0)
-            this.#program.startRpc(module);
+            await this.#program.startRpcAsync(module);
         return this;
     }
     #startModules() {

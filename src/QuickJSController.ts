@@ -67,7 +67,7 @@ export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents
 		this.#startModules();
 		const module = this.#program.createModule(this.#mainModuleName, this.#source[this.#mainModuleName]);
 		const keys = module.withModule(val => val.getKeys());
-		if (keys && keys.length > 0) this.#program.startRpc(module)
+		if (keys && keys.length > 0) this.#program.startRpc(module);
 		return this;
 	}
 	
@@ -75,7 +75,7 @@ export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents
 		this.#startModules();
 		const module = await this.#program.createModuleAsync(this.#mainModuleName, this.#source[this.#mainModuleName]);
 		const keys = module.withModule(val => val.getKeys());
-		if (keys && keys.length > 0) this.#program.startRpc(module)
+		if (keys && keys.length > 0) await this.#program.startRpcAsync(module);
 		return this;
 	}
 	

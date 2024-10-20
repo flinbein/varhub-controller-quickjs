@@ -139,19 +139,18 @@ export class QuickJsProgram extends UsingDisposable {
             return context.dump(scope.manage(evalHandle.error));
         });
     }
+    static #rpcLoaderCode /* language=javascript */ = `
+		import RPCSource from "varhub:rpc";
+		import room from "varhub:room";
+        export default (module) => RPCSource.start(new RPCSource(module), room, "$rpc");
+	`;
     startRpc(targetModule) {
-        const rpcModule = this.#loadedModules.get("varhub:rpc") ?? this.createModule("varhub:rpc");
-        const roomModule = this.#loadedModules.get("varhub:room") ?? this.createModule("varhub:room");
-        rpcModule.withModule(rpcModuleWrapper => {
-            const rpcClassWrapper = rpcModuleWrapper.getProp("default");
-            return targetModule.withModule(targetModuleWrapper => {
-                const rpcWrapper = rpcClassWrapper.new(targetModuleWrapper);
-                return roomModule.withModule(roomModuleWrapper => {
-                    const roomWrapper = roomModuleWrapper.getProp("default");
-                    rpcClassWrapper.callMethod("start", rpcWrapper, roomWrapper, "$rpc");
-                });
-            });
-        });
+        const module = this.createModule("varhub:rpc#loader", QuickJsProgram.#rpcLoaderCode, true);
+        targetModule.withModule(wrapper => module.callMethodIgnored("default", undefined, wrapper));
+    }
+    async startRpcAsync(targetModule) {
+        const module = await this.createModuleAsync("varhub:rpc#loader", QuickJsProgram.#rpcLoaderCode, true);
+        targetModule.withModule(wrapper => module.callMethodIgnored("default", undefined, wrapper));
     }
     setBuiltinModuleName(moduleName, builtin) {
         if (builtin) {
