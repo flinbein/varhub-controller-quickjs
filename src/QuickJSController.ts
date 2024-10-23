@@ -22,6 +22,7 @@ export interface ControllerOptions {
 
 export type QuickJSControllerEvents = {
 	console: Parameters<ConsoleHandler>;
+	dispose: []
 }
 
 const baseModules: Partial<Record<string, string>> = {
@@ -51,7 +52,8 @@ export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents
 			this.#configJson = JSON.stringify(options.config) ?? "undefined";
 			
 			this.#program = new QuickJsProgram(quickJS, this.#getSource.bind(this), {
-				consoleHandler: this.#consoleHandler
+				consoleHandler: this.#consoleHandler,
+				disposeHandler: () => this[Symbol.dispose]()
 			});
 			
 			this.#mainModuleName = code.main;
@@ -121,8 +123,16 @@ export class QuickJSController extends TypedEventEmitter<QuickJSControllerEvents
 		return await response.text();
 	}
 	
+	#disposed = false;
+	
+	get disposed() {
+		return this.#disposed;
+	}
+	
 	[Symbol.dispose](){
+		if (this.#disposed) return;
+		this.#disposed = true;
 		this.#program?.dispose();
-		this.#room?.[Symbol.dispose]();
+		this.emit("dispose");
 	}
 }

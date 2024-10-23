@@ -30,7 +30,8 @@ export class QuickJSController extends TypedEventEmitter {
             this.#source = { ...code.source };
             this.#configJson = JSON.stringify(options.config) ?? "undefined";
             this.#program = new QuickJsProgram(quickJS, this.#getSource.bind(this), {
-                consoleHandler: this.#consoleHandler
+                consoleHandler: this.#consoleHandler,
+                disposeHandler: () => this[Symbol.dispose]()
             });
             this.#mainModuleName = code.main;
         }
@@ -99,9 +100,16 @@ export class QuickJSController extends TypedEventEmitter {
         const response = await fetch(url);
         return await response.text();
     }
+    #disposed = false;
+    get disposed() {
+        return this.#disposed;
+    }
     [Symbol.dispose]() {
+        if (this.#disposed)
+            return;
+        this.#disposed = true;
         this.#program?.dispose();
-        this.#room?.[Symbol.dispose]();
+        this.emit("dispose");
     }
 }
 //# sourceMappingURL=QuickJSController.js.map

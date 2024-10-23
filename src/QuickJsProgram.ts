@@ -20,6 +20,7 @@ export type QuickJsProgramSource = {
 
 export interface QuickJsProgramSettings {
 	consoleHandler?: ConsoleHandler
+	disposeHandler?: () => void,
 }
 
 export class QuickJsProgram extends UsingDisposable {
@@ -37,9 +38,11 @@ export class QuickJsProgram extends UsingDisposable {
 		this.#immediateManager,
 	]);
 	readonly #builtinModuleNames = new Set<string>;
+	readonly #disposeHandler;
 	
 	constructor(quickJS: QuickJSWASMModule, getSource: QuickJsProgramSource, settings: QuickJsProgramSettings ={}) {
 		super();
+		this.#disposeHandler = settings.disposeHandler;
 		this.#getSource = getSource;
 		const context = this.#context = quickJS.newContext();
 		context.runtime.setMemoryLimit(100000000);
@@ -213,5 +216,6 @@ export class QuickJsProgram extends UsingDisposable {
 		for (let ownedDisposableItem of this.#ownedDisposableItems) if (ownedDisposableItem.alive) try {
 			ownedDisposableItem.dispose();
 		} catch {}
+		this.#disposeHandler?.();
 	}
 }

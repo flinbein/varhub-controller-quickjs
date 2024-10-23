@@ -19,8 +19,10 @@ export class QuickJsProgram extends UsingDisposable {
         this.#immediateManager,
     ]);
     #builtinModuleNames = new Set;
+    #disposeHandler;
     constructor(quickJS, getSource, settings = {}) {
         super();
+        this.#disposeHandler = settings.disposeHandler;
         this.#getSource = getSource;
         const context = this.#context = quickJS.newContext();
         context.runtime.setMemoryLimit(100000000);
@@ -185,6 +187,7 @@ export class QuickJsProgram extends UsingDisposable {
                     ownedDisposableItem.dispose();
                 }
                 catch { }
+        this.#disposeHandler?.();
     }
 }
 //# sourceMappingURL=QuickJsProgram.js.map
