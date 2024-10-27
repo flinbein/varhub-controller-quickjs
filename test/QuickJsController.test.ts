@@ -812,10 +812,7 @@ describe("test controller",() => {
 		}
 		
 		const room = new Room();
-		await new QuickJSController(room, quickJSAsync, code)
-			.on("console", (...data) => console.log("---VM", ...data))
-			.startAsync()
-		;
+		await new QuickJSController(room, quickJSAsync, code).startAsync()
 		const [client] = await new Client(room, "Bob").enter();
 		
 		const channelData1 = await new Promise(resolve => {
@@ -849,4 +846,29 @@ describe("test controller",() => {
 		assert.equal(channelData2, 22, "2nd channel state");
 		
 	})
+	
+	it("RPCSource.default", {timeout: 300}, async () => {
+		
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+                    import RPCSource from "varhub:rpc";
+                    export function emit(...data){
+                        RPCSource.current.emit("customEvent", ...data)
+					}
+				`
+			}
+		}
+		
+		const room = new Room();
+		await new QuickJSController(room, quickJSAsync, code).startAsync();
+		
+		const [client] = await new Client(room, "Bob").enter();
+		const channelEvent = await new Promise(resolve => {
+			client.on("customEvent", (...args) => resolve(args));
+			client.call("emit", 1, 2);
+		});
+		assert.deepEqual(channelEvent, [1, 2], "got event");
+	});
 });
