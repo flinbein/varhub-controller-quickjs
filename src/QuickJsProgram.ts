@@ -172,11 +172,11 @@ export class QuickJsProgram extends UsingDisposable {
 	
 	static #rpcLoaderCode /* language=javascript */ = `
 		import RPCSource from "varhub:rpc";
+		import RPCSourceInner from "varhub:rpc#inner";
 		import room from "varhub:room";
         export default (module) => {
-            const current = new RPCSource(module);
-            Object.defineProperty(RPCSource, "current", {get: () => current});
-            RPCSource.start(current, room);
+            RPCSourceInner.form = module;
+            RPCSource.start(RPCSource.default, room);
         }
 	`
 	

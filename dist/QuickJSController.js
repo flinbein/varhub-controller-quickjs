@@ -4,11 +4,12 @@ import { RoomModuleHelper } from "./RoomModuleHelper.js";
 import { ApiModuleHelper } from "./ApiModuleHelper.js";
 import { PerformanceModuleHelper } from "./PerformanceModuleHelper.js";
 import eventEmitterSource from "./innerSource/EventEmitterSource.js";
-import rpcSource from "./innerSource/RPCSource.js";
+import { rpcSourceModified, rpcSourceInner } from "./innerSource/RpcSourceModified.js";
 import playersSource from "./innerSource/PlayersSource.js";
 const baseModules = {
     "varhub:events": eventEmitterSource,
-    "varhub:rpc": rpcSource,
+    "varhub:rpc": rpcSourceModified,
+    "varhub:rpc#inner": rpcSourceInner,
     "varhub:players": playersSource,
 };
 export class QuickJSController extends TypedEventEmitter {

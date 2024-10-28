@@ -855,7 +855,7 @@ describe("test controller",() => {
 				"index.js": /* language=JavaScript */ `
                     import RPCSource from "varhub:rpc";
                     export function emit(...data){
-                        RPCSource.current.emit("customEvent", ...data)
+                        RPCSource.default.emit("customEvent", ...data)
 					}
 				`
 			}
