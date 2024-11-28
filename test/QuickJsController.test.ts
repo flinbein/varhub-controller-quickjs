@@ -43,6 +43,9 @@ class Client {
 	private _rpcEventEmitter = new EventEmitter();
 	private _closeReason: string | null | undefined = undefined;
 	private _resolvers = (Promise as any).withResolvers();
+	private _closeResolvers = (Promise as any).withResolvers();
+	readonly promise: Promise<this> = this._resolvers.promise
+	readonly closePromise: Promise<this> = this._closeResolvers.promise
 	constructor(room: Room, ...params: any[]) {
 		this._room = room;
 		this._params = params;
@@ -53,13 +56,14 @@ class Client {
 		this._connection = this._room.createConnection()
 		.on("disconnect", (ignored, reason) => {
 			this._resolvers.reject(reason);
+			this._closeResolvers.resolve(this);
 			this._closeReason = reason;
 			for (let eventName of this._rpcResultEmitter.eventNames()) {
 				this._rpcResultEmitter.emit(eventName, 3);
 			}
 		})
 		.on("join", () => {
-			this._resolvers.resolve();
+			this._resolvers.resolve(this);
 		})
 		.on("event", (...eventArgs) => {
 			const [eventId, channelId, operationId, ...args] = eventArgs;
@@ -77,13 +81,6 @@ class Client {
 		.enter(...this._params);
 		return this;
 	}
-	
-	then<R1 = [this], R2 = never>(
-		onfulfilled?: ((value: [this]) => R1 | PromiseLike<R1>) | undefined | null,
-		onrejected?: ((reason: any) => R2 | PromiseLike<R2>) | undefined | null
-	): PromiseLike<R1 | R2> {
-		return this._resolvers.promise.then(() => [this] as [this]).then(onfulfilled, onrejected);
-	};
 	
 	open(){
 		this._room!.join(this._connection!);
@@ -158,11 +155,11 @@ describe("test controller",() => {
 					const players = new Players(room, (con, name) => name);
 
 					export function greet(){
-    					return "Hello, " + players.get(this).name + "!";
+						return "Hello, " + players.get(this).name + "!";
 					}
 
-                    export function getPlayers(){
-                        return [...players].map(p => p.name);
+					export function getPlayers(){
+						return [...players].map(p => p.name);
 					}
 				`
 			}
@@ -193,10 +190,10 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    export async function greet(){
-                        await new Promise(r => setTimeout(r, 1));
-                        return "Hello, " + this.parameters[0] + "!";
-                    }
+					export async function greet(){
+						await new Promise(r => setTimeout(r, 1));
+						return "Hello, " + this.parameters[0] + "!";
+					}
 				`
 			}
 		}
@@ -215,9 +212,9 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import counter from "varhub:api/Counter";
-                    export const getCurrent = () => counter.current()
-                    export const getNext = () => counter.next()
+					import counter from "varhub:api/Counter";
+					export const getCurrent = () => counter.current()
+					export const getNext = () => counter.next()
 				`
 			}
 		}
@@ -237,8 +234,8 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import counter from "varhub:api/Counter";
-                    export const getError = () => counter.error();
+					import counter from "varhub:api/Counter";
+					export const getError = () => counter.error();
 				`
 			}
 		}
@@ -260,11 +257,11 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import network from "varhub:api/Network";
-                    export const fetch = async (url) => {
-                        const response = await network.fetch(url);
-                        return response.data;
-                    }
+					import network from "varhub:api/Network";
+					export const fetch = async (url) => {
+						const response = await network.fetch(url);
+						return response.data;
+					}
 				`
 			}
 		}
@@ -286,11 +283,11 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import network from "varhub:api/Network";
-                    export const fetchWithError = async (url) => {
-                        const response = await network.fetchWithError(url);
-                        return response.data;
-                    }
+					import network from "varhub:api/Network";
+					export const fetchWithError = async (url) => {
+						const response = await network.fetchWithError(url);
+						return response.data;
+					}
 				`
 			}
 		}
@@ -312,9 +309,9 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import room from "varhub:room";
-                    export const getRoomMessage = () => room.message
-                    export const setRoomMessage = (msg) => room.message = msg;
+					import room from "varhub:room";
+					export const getRoomMessage = () => room.message
+					export const setRoomMessage = (msg) => room.message = msg;
 				`
 			}
 		}
@@ -335,13 +332,13 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import room from "varhub:room";
-                    let closed = false;
-                    room.on("connection", con => {
-                        closed ? con.close("room-closed") : con.open();
-                    });
-                    export const getRoomClosed = () => closed
-                    export const setRoomClosed = (msg) => closed = msg;
+					import room from "varhub:room";
+					let closed = false;
+					room.on("connection", con => {
+						closed ? con.close("room-closed") : con.open();
+					});
+					export const getRoomClosed = () => closed
+					export const setRoomClosed = (msg) => closed = msg;
 				`
 			}
 		}
@@ -368,8 +365,8 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import room from "varhub:room";
-                    export const destroy = () => room.destroy();
+					import room from "varhub:room";
+					export const destroy = () => room.destroy();
 				`
 			}
 		}
@@ -389,20 +386,20 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import room from "varhub:room";
-                    import Players from "varhub:players";
+					import room from "varhub:room";
+					import Players from "varhub:players";
 
-                    const players = new Players(room, (_c, name) => name);
+					const players = new Players(room, (_c, name) => name);
 
-                    export function isPlayerOnline(name){
-                        return players.get(name)?.online;
-                    }
-                    export function hasPlayer(name){
-                        return players.get(name)?.registered ?? false
-                    }
-                    export function kick(name){
-                        players.get(name).kick();
-                    };
+					export function isPlayerOnline(name){
+						return players.get(name)?.online;
+					}
+					export function hasPlayer(name){
+						return players.get(name)?.registered ?? false
+					}
+					export function kick(name){
+						players.get(name).kick();
+					};
 				`
 			}
 		}
@@ -439,14 +436,14 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import room from "varhub:room";
-                    room.on("connection", con => con.open());
-                    export function send(receiver, eventName,  ...args){
-                        for (const con of room.getConnections()){
-                            if (con.parameters[0] === receiver) con.send("$rpc", undefined, 4, [eventName], args)
-                        }
-                    }
-                    export const broadcast = room.broadcast;
+					import room from "varhub:room";
+					room.on("connection", con => con.open());
+					export function send(receiver, eventName,  ...args){
+						for (const con of room.getConnections()){
+							if (con.parameters[0] === receiver) con.send("$rpc", undefined, 4, [eventName], args)
+						}
+					}
+					export const broadcast = room.broadcast;
 				`
 			}
 		}
@@ -472,13 +469,13 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import room from "varhub:room";
-                    room.on("connection", con => con.open());
-                    export function getPlayerData(name){
-                        for (const con of room.getConnections()){
-                            if (con.parameters[0] === name) return con.parameters[1];
-                        }
-                    }
+					import room from "varhub:room";
+					room.on("connection", con => con.open());
+					export function getPlayerData(name){
+						for (const con of room.getConnections()){
+							if (con.parameters[0] === name) return con.parameters[1];
+						}
+					}
 				`
 			}
 		}
@@ -497,15 +494,15 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import room from "varhub:room";
-                    room.on("connection", con => con.open());
+					import room from "varhub:room";
+					room.on("connection", con => con.open());
 
-                    let last = undefined;
-                    const onJoin = (con) => last = con.parameters[0];
-                    room.on("connectionOpen", onJoin);
+					let last = undefined;
+					const onJoin = (con) => last = con.parameters[0];
+					room.on("connectionOpen", onJoin);
 
-                    export const getLast = () => last;
-                    export const stopListen = () => room.off("connectionOpen", onJoin);
+					export const getLast = () => last;
+					export const stopListen = () => room.off("connectionOpen", onJoin);
 				`
 			}
 		}
@@ -531,14 +528,14 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import room from "varhub:room";
-                    room.on("connection", con => con.open());
+					import room from "varhub:room";
+					room.on("connection", con => con.open());
 
-                    let last = undefined;
-                    const onOffline = (con) => last = con.parameters[0];
-                    room.once("connectionClose", onOffline);
+					let last = undefined;
+					const onOffline = (con) => last = con.parameters[0];
+					room.once("connectionClose", onOffline);
 
-                    export const getLast = () => last;
+					export const getLast = () => last;
 				`
 			}
 		}
@@ -547,14 +544,14 @@ describe("test controller",() => {
 		new QuickJSController(room, quickJS, code, {
 			apiHelperController: new ApiHelperController(room, apiSource)
 		}).start();
-		const [bobClient] = await new Client(room, "Bob").enter();
+		const bobClient = await new Client(room, "Bob").enter().promise;
 		assert.equal(await bobClient.call("getLast"), undefined, "no offline");
 
-		const [aliceClient] = await new Client(room, "Alice").enter();
+		const aliceClient = await new Client(room, "Alice").enter().promise;
 		aliceClient.leave();
 		assert.equal(await bobClient.call("getLast"), "Alice", "Alice disconnected first");
 
-		const [eveClient] = await new Client(room, "Eve").enter();
+		const eveClient = await new Client(room, "Eve").enter().promise;
 		eveClient.leave();
 		assert.equal(await bobClient.call("getLast"), "Alice", "Alice still disconnected first");;
 	});
@@ -564,8 +561,8 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import config from "varhub:config";
-                    export const getConfig = () => config
+					import config from "varhub:config";
+					export const getConfig = () => config
 				`
 			}
 		}
@@ -582,8 +579,8 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import config from "varhub:config";
-                    export const getConfig = () => config
+					import config from "varhub:config";
+					export const getConfig = () => config
 				`
 			}
 		}
@@ -600,7 +597,7 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    export const doConsole = (level, ...args) => console[level](...args);
+					export const doConsole = (level, ...args) => console[level](...args);
 				`
 			}
 		}
@@ -627,16 +624,16 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import room from "varhub:room";
-                    room.on("connection", con => con.open());
+					import room from "varhub:room";
+					room.on("connection", con => con.open());
 
-                    export function kickOther(){
-                        const connections = room.getConnections();
-                        for (const c of connections){
-                            if (c === this) continue;
-                            c.close("kick-reason");
-                        }
-                    }
+					export function kickOther(){
+						const connections = room.getConnections();
+						for (const c of connections){
+							if (c === this) continue;
+							c.close("kick-reason");
+						}
+					}
 				`
 			}
 		}
@@ -661,13 +658,13 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import { createEvent, createStore} from 'https://cdn.jsdelivr.net/npm/effector/effector.mjs'
+					import { createEvent, createStore} from 'https://cdn.jsdelivr.net/npm/effector/effector.mjs'
 
-                    export const add = createEvent();
-                    const $counter = createStore(0);
-                    $counter.on(add, (count, num) => count + num);
+					export const add = createEvent();
+					const $counter = createStore(0);
+					$counter.on(add, (count, num) => count + num);
 
-                    export const getCounter = () => $counter.getState();
+					export const getCounter = () => $counter.getState();
 				`
 			}
 		}
@@ -685,11 +682,11 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import room from "varhub:room";
-                    room.on("connection", (con) => {
-                        con.open();
-                        con.send("$rpc", undefined, 4, ["joined"], [])
-                    });
+					import room from "varhub:room";
+					room.on("connection", (con) => {
+						con.open();
+						con.send("$rpc", undefined, 4, ["joined"], [])
+					});
 				`
 			}
 		}
@@ -709,20 +706,20 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import * as performance from "varhub:performance";
-                    export function f() {
+					import * as performance from "varhub:performance";
+					export function f() {
 						const a = performance.now();
-                        for (let i=0; i<100; i++);
+						for (let i=0; i<100; i++);
 						const b = performance.now();
-                        return [a, b];
-                    }
+						return [a, b];
+					}
 				`
 			}
 		}
 
 		const room = new Room();
 		await new QuickJSController(room, quickJSAsync, code).startAsync();
-		const [client] = await new Client(room, "Bob").enter()
+		const client = await new Client(room, "Bob").enter().promise
 		const result = await client.call("f") as any;
 		assert.equal(typeof result[0], "number", "a is number");
 		assert.equal(typeof result[1], "number", "a is number");
@@ -734,27 +731,28 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import RPCSource from "varhub:rpc";
-                    export class Deck extends RPCSource {
-                        constructor(baseState){
-                            const con = new.target.connection;
-                            super({
-                                getMyName() {
-                                    return String(con.parameters[0]);
-                                },
-                                changeState: (value) => {
-                                    this.setState(value)
-                                }
-                            }, baseState);
-                        }
-                    }
+					import RPCSource from "varhub:rpc";
+					export class Deck extends RPCSource {
+						constructor(baseState) {
+							// noinspection JSAnnotator
+							const con = new.target.connection;
+							super({
+								getMyName() {
+									return String(con.parameters[0]);
+								},
+								changeState: (value) => {
+									this.setState(value)
+								}
+							}, baseState);
+						}
+					}
 				`
 			}
 		}
 		
 		const room = new Room();
 		new QuickJSController(room, quickJSAsync, code).start();
-		const [client] = await new Client(room, "Bob").enter();
+		const client = await new Client(room, "Bob").enter().promise;
 		
 		const channelData1 = await new Promise(resolve => {
 			const unsubscribe = client.onRawEvent((key, channel, command, data) => {
@@ -793,18 +791,19 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import RPCSource from "varhub:rpc";
+					import RPCSource from "varhub:rpc";
 					export class Deck extends RPCSource {
-                        constructor(baseState){
-                            const con = new.target.connection;
-                            super({
-                                getMyName() {
+						constructor(baseState) {
+							// noinspection JSAnnotator
+							const con = new.target.connection;
+							super({
+								getMyName() {
 									return String(con.parameters[0]);
 								},
-                            	changeState: (value) => {
-                                	this.setState(value)
-                            	}
-                        	}, baseState);
+								changeState: (value) => {
+									this.setState(value)
+								}
+							}, baseState);
 						}
 					}
 				`
@@ -813,7 +812,7 @@ describe("test controller",() => {
 		
 		const room = new Room();
 		await new QuickJSController(room, quickJSAsync, code).startAsync()
-		const [client] = await new Client(room, "Bob").enter();
+		const client = await new Client(room, "Bob").enter().promise;
 		
 		const channelData1 = await new Promise(resolve => {
 			const unsubscribe = client.onRawEvent((key, channel, command, data) => {
@@ -853,9 +852,9 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
-                    import RPCSource from "varhub:rpc";
-                    export function emit(...data){
-                        RPCSource.default.emit("customEvent", ...data)
+					import RPCSource from "varhub:rpc";
+					export function emit(...data){
+						RPCSource.default.emit("customEvent", ...data)
 					}
 				`
 			}
@@ -864,11 +863,60 @@ describe("test controller",() => {
 		const room = new Room();
 		await new QuickJSController(room, quickJSAsync, code).startAsync();
 		
-		const [client] = await new Client(room, "Bob").enter();
+		const client = await new Client(room, "Bob").enter().promise;
 		const channelEvent = await new Promise(resolve => {
 			client.on("customEvent", (...args) => resolve(args));
 			client.call("emit", 1, 2);
 		});
 		assert.deepEqual(channelEvent, [1, 2], "got event");
 	});
+	
+	it("room validators", {timeout: 500}, async () => {
+		
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"room.js": /* language=JavaScript */ `
+					import room from "varhub:room";
+					export default room.withType().validate({
+						parameters: (s) => s.length >= 2 && s.every(v => typeof v === "string"),
+						clientMessage: (s) => s.length >= 2 && s.every(v => typeof v === "number")
+					}).withType();
+				`,
+				"index.js": /* language=JavaScript */ `
+					import room from "./room.js";
+					const conEvents = [];
+					const msgEvents = [];
+					const nextRoom = room
+						.on("connection", (c, ...args) => conEvents.push(args))
+						.on("connectionMessage", (c, ...args) => msgEvents.push(args))
+						.on("connectionClose", () => room.broadcast(conEvents, msgEvents));
+					if (nextRoom !== room) throw new Error("method 'on' returns not this");
+				`
+			}
+		}
+		
+		const room = new Room();
+		await new QuickJSController(room, quickJSAsync, code).startAsync();
+		
+		await new Client(room).enter().closePromise;
+		await new Client(room, "Bob").enter().closePromise;
+		const client1 = await new Client(room, "Bob", "player1").enter().promise;
+		const client2 = await new Client(room, "Bob", "player2").enter().promise;
+		let eventsData: any[];
+		client1.onRawEvent((...args) => eventsData = args);
+		client1.sendRaw(1, 2, 3);
+		client2.sendRaw(1);
+		await client2.closePromise;
+		assert.equal(client1.status, "joined");
+		assert.equal(client2.status, "disconnected");
+		
+		assert.deepEqual(eventsData![0], [
+			["Bob", "player1"],
+			["Bob", "player2"],
+		]);
+		assert.deepEqual(eventsData![1], [
+			[1, 2, 3],
+		]);
+	})
 });
