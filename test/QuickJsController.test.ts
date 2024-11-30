@@ -34,7 +34,7 @@ class Network implements ApiHelper {
 const apiSource: ApiSource = {Counter, Network}
 
 class Client {
-	private _connection: Connection | undefined
+	private _connection: Connection
 	private readonly _room: Room;
 	private readonly _params: any[];
 	private readonly _eventLog: unknown[] = [];
@@ -50,9 +50,6 @@ class Client {
 		this._room = room;
 		this._params = params;
 		this._resolvers.promise.catch(() => {});
-	}
-	
-	enter(): this {
 		this._connection = this._room.createConnection()
 		.on("disconnect", (ignored, reason) => {
 			this._resolvers.reject(reason);
@@ -78,7 +75,10 @@ class Client {
 				this._eventLog.push(args);
 			}
 		})
-		.enter(...this._params);
+	}
+	
+	enter(): this {
+		this._connection.enter(...this._params);
 		return this;
 	}
 	
@@ -121,11 +121,11 @@ class Client {
 	}
 	
 	sendRaw(...args: any[]){
-		this._connection!.message(...args);
+		this._connection.message(...args);
 	}
 	
 	onRawEvent(handler: (...args: any[]) => void) {
-		this._connection!.on("event", handler);
+		this._connection.on("event", handler);
 		return () => void this._connection!.off("event", handler);
 	}
 	
@@ -918,5 +918,57 @@ describe("test controller",() => {
 		assert.deepEqual(eventsData![1], [
 			[1, 2, 3],
 		]);
+	})
+	
+	it("room this in event", {timeout: 2500}, async () => {
+		
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+					import room from "varhub:room";
+					room.on("connection", function(connection){
+						connection.open();
+						connection.send(this === room);
+					})
+				`
+			}
+		}
+		
+		const room = new Room();
+		await new QuickJSController(room, quickJSAsync, code).startAsync();
+		
+		const promiseRes = Promise.withResolvers();
+		const client = new Client(room);
+		client.onRawEvent(promiseRes.resolve);
+		await client.enter().promise;
+		await new Promise(r => setTimeout(r, 1000));
+		assert.equal(await promiseRes.promise, true, "this value is room");
+	});
+	
+	it("connection this in event", {timeout: 2500}, async () => {
+		const code: QuickJSControllerCode = {
+			main: "index.js",
+			source: {
+				"index.js": /* language=JavaScript */ `
+					import room from "varhub:room";
+					room.on("connection", (connection) => {
+						connection.on("message", function(){
+							connection.send(this === connection);
+						});
+					});
+				`
+			}
+		}
+		
+		const room = new Room();
+		await new QuickJSController(room, quickJSAsync, code).startAsync();
+		
+		const client = await new Client(room).enter().promise;
+		const result = await new Promise(resolve => {
+			client.onRawEvent(resolve);
+			client.sendRaw(1);
+		})
+		assert.equal(result, true, "this value is connection");
 	})
 });
