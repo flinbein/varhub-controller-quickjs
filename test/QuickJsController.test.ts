@@ -155,7 +155,7 @@ describe("test controller",() => {
 					const players = new Players(room, (con, name) => name);
 
 					export function greet(){
-						return "Hello, " + players.get(this).name + "!";
+						return "Hello, " + players.get(room.useConnection()).name + "!";
 					}
 
 					export function getPlayers(){
@@ -190,9 +190,11 @@ describe("test controller",() => {
 			main: "index.js",
 			source: {
 				"index.js": /* language=JavaScript */ `
+					import room from "varhub:room";
 					export async function greet(){
+						const connection = room.useConnection();
 						await new Promise(r => setTimeout(r, 1));
-						return "Hello, " + this.parameters[0] + "!";
+						return "Hello, " + connection.parameters[0] + "!";
 					}
 				`
 			}
@@ -628,9 +630,10 @@ describe("test controller",() => {
 					room.on("connection", con => con.open());
 
 					export function kickOther(){
+						const currentConnection = room.useConnection();
 						const connections = room.getConnections();
 						for (const c of connections){
-							if (c === this) continue;
+							if (c === currentConnection) continue;
 							c.close("kick-reason");
 						}
 					}

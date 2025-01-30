@@ -1,4 +1,5 @@
-export const roomSource: string = /* language=JavaScript */ `import {$, roomEmitter, getConnections, validate} from "#inner";
+export const roomSource: string = /* language=JavaScript */ `
+import {$, roomEmitter, getConnections, validate, useConnection} from "#inner";
 const room = Object.freeze({
 	get message(){return $.getRoomMessage()},
 	set message(message){$.setRoomMessage(message)},
@@ -15,6 +16,7 @@ const room = Object.freeze({
 	on(...args){ return roomEmitter.on.apply(this, args)},
 	once(...args){ return roomEmitter.once.apply(this, args)},
 	off(...args){ return roomEmitter.off.apply(this, args)},
+	useConnection,
 	[Symbol.dispose](){this.destroy()},
 	[Symbol.asyncDispose](){this.destroy(); return Promise.resolve()}
 })
@@ -25,6 +27,7 @@ export const roomInnerSource: string = /* language=JavaScript */ `import EventEm
 export let $;
 export const set = a => {$ = a}
 export const /** @type {Node.EventEmitter} */ roomEmitter = new EventEmitter();
+let context;
 
 const /** @type {Map<number, Connection>} */ connections = new Map();
 const /** @type {WeakSet<Connection>} */ readyConnections = new WeakSet();
@@ -114,7 +117,18 @@ class Connection {
 		return this.#id;
 	}
 }
-
+export function useConnection(){
+	if (context?.connection == null) throw new Error("useContext error: context is undefined");
+	return context?.connection;
+}
+function runWithContext(value, fn, ...args){
+	try {
+		context = value;
+		return fn(...args);
+	} finally {
+		context = undefined;
+	}
+}
 export const onEnter = (conId, ...args) => {
 	if (!parametersValidator) return handleEnter(conId, ...args);
 	try {
@@ -126,11 +140,13 @@ export const onEnter = (conId, ...args) => {
 	}
 }
 
-function handleEnter(conId, ...args) {
-	const connection = new Connection(conId, args);
+function handleEnter(conId, ...parameters) {
+	const connection = new Connection(conId, parameters);
 	connections.set(conId, connection);
-	roomEmitter.emitWithTry("connection", connection, ...args);
-	if (!connection.deferred) connection.open();
+	runWithContext({connection, parameters}, () => {
+		roomEmitter.emitWithTry("connection", connection, ...parameters);
+		if (!connection.deferred) connection.open();
+	});
 }
 
 export const onJoin = (conId) => {
@@ -139,20 +155,24 @@ export const onJoin = (conId) => {
 		connection = new Connection(conId);
 		connections.set(conId, connection);
 	}
-	readyConnections.add(connection)
-	connectionEmitters.get(connection)?.emitWithTry("open");
-	roomEmitter.emitWithTry("connectionOpen", connection);
+	readyConnections.add(connection);
+	runWithContext({connection}, () => {
+		connectionEmitters.get(connection)?.emitWithTry("open");
+		roomEmitter.emitWithTry("connectionOpen", connection);
+	})
 }
 
-export const onClose = (conId, wasReady, reason) => {
+export const onClose = (conId, wasOnline, reason) => {
 	const connection = connections.get(conId);
 	connections.delete(conId);
 	if (connection) {
 		readyConnections.delete(connection);
 		const emitter = connectionEmitters.get(connection);
 		connectionEmitters.delete(connection);
-		emitter?.emitWithTry("close", reason, wasReady);
-		roomEmitter.emitWithTry("connectionClose", connection, reason, wasReady);
+		runWithContext({connection, reason, wasOnline}, () => {
+			emitter?.emitWithTry("close", reason, wasOnline);
+			roomEmitter.emitWithTry("connectionClose", connection, reason, wasOnline);
+		});
 	}
 }
 
@@ -167,14 +187,16 @@ export const onMessage = (conId, ...args) => {
 	}
 }
 
-function handleMessage(conId, ...args){
+function handleMessage(conId, ...message){
 	let connection = connections.get(conId);
 	if (!connection) {
 		connection = new Connection(conId);
 		connections.set(conId, connection);
 	}
-	connectionEmitters.get(connection)?.emitWithTry("message", ...args);
-	roomEmitter.emitWithTry("connectionMessage", connection, ...args);
+	runWithContext({connection, message: message}, () => {
+		connectionEmitters.get(connection)?.emitWithTry("message", ...message);
+		roomEmitter.emitWithTry("connectionMessage", connection, ...message);
+	});
 }
 
 export const getConnections = (options) => {

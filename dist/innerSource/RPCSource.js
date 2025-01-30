@@ -66,6 +66,7 @@ export default class RPCSource {
 			}
 		}
 		return function (con, path, args, openChannel) {
+			let base = undefined;
 			let target = parameters?.form;
 			for (let i = 0; i < path.length; i++) {
 				const step = i === 0 ? prefix + path[i] : path[i];
@@ -78,6 +79,7 @@ export default class RPCSource {
 						throw new Error("wrong path: " + step + " in (" + prefix + ")" + path.join(".") + ": forbidden prop");
 					}
 				}
+				base = target;
 				target = target[step];
 			}
 			if (openChannel && args.length === 0) {
@@ -97,12 +99,7 @@ export default class RPCSource {
 				result.#autoDispose = MetaConstructor.autoClose;
 				return result;
 			}
-			return target.apply(con, args);
-		};
-	}
-	static unbind(handler, thisVal) {
-		return function (...args) {
-			return handler.call(thisVal, this, ...args);
+			return target.apply(base, args);
 		};
 	}
 	static validate(validator, handler) {
@@ -114,17 +111,6 @@ export default class RPCSource {
 			if (!validateResult)
 				throw new Error("invalid parameters");
 			return handler.call(this, ...args);
-		};
-	}
-	static validateUnbind(validator, handler, thisVal) {
-		return function (...args) {
-			const validateResult = validator(args);
-			if (Array.isArray(validateResult)) {
-				return handler.call(thisVal, this, ...validateResult);
-			}
-			if (!validateResult)
-				throw new Error("invalid parameters");
-			return handler.call(thisVal, this, ...args);
 		};
 	}
 	withEventTypes() {
